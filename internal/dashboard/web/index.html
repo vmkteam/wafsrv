@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>wafsrv Dashboard</title>
+<link rel="stylesheet" href="dashboard.css">
+<script src="dashboard.js"></script>
+<script defer src="alpine.min.js"></script>
+</head>
+<body>
+
+<div x-data="dashboard()" x-init="start()">
+
+<header>
+  <h1>wafsrv</h1>
+  <div id="status-bar">
+    <span x-text="status.service">—</span>
+    <span x-text="uptimeText">—</span>
+    <span class="badge" :class="status.wafEnabled ? 'on' : 'off'" x-text="status.wafEnabled ? 'WAF ' + status.wafMode : 'WAF off'"></span>
+    <span class="badge" :class="status.rateLimitEnabled ? 'on' : 'off'" x-text="status.rateLimitEnabled ? 'RL on' : 'RL off'"></span>
+    <span class="badge" :class="cbState === 'closed' ? 'on' : cbState === 'open' ? 'danger' : 'warn'" x-text="'CB ' + cbState" x-show="cbState !== 'n/a'"></span>
+    <button class="badge" :class="attack.enabled ? 'on blink' : 'off'" @click="toggleAttack()" x-text="attack.enabled ? (attack.source === 'auto' ? 'AUTO ATTACK' : 'UNDER ATTACK') : 'Normal'"></button>
+    <button class="theme-toggle" @click="toggleTheme()" x-text="theme === 'dark' ? '◐' : '◑'" title="Toggle theme"></button>
+  </div>
+</header>
+
+<nav class="main-tabs">
+  <button :class="mainTab === 'overview' && 'active'" @click="mainTab = 'overview'">Overview</button>
+  <button :class="mainTab === 'rules' && 'active'" @click="mainTab = 'rules'">Rules</button>
+  <button :class="mainTab === 'events' && 'active'" @click="mainTab = 'events'">Events</button>
+  <button :class="mainTab === 'config' && 'active'" @click="mainTab = 'config'">Config</button>
+</nav>
+
+<main>
+
+<!-- ==================== TAB: OVERVIEW ==================== -->
+<div x-show="mainTab === 'overview'">
+
+<section class="cards-group">
+  <h3 class="cards-title">Traffic</h3>
+  <div class="cards">
+    <div class="card" title="Total incoming requests entering the pipeline (last 30 min)">
+      <div class="card-value" x-text="fmtNum(totalRequests)">—</div>
+      <div class="sparkline"><template x-for="v in spark('incoming')"><div class="spark-bar" :style="'height:'+v+'%'"></div></template></div>
+      <div class="card-label">Requests</div>
+    </div>
+    <div class="card" title="Requests per second (from last completed 5s interval)">
+      <div class="card-value" x-text="rps">—</div>
+      <div class="sparkline"><template x-for="v in spark('incoming')"><div class="spark-bar spark-cyan" :style="'height:'+v+'%'"></div></template></div>
+      <div class="card-label">RPS</div>
+    </div>
+    <div class="card" title="Requests that reached the backend (not blocked/filtered/limited)">
+      <div class="card-value" x-text="fmtNum(passed)">—</div>
+      <div class="sparkline"><template x-for="v in spark('requests')"><div class="spark-bar spark-green" :style="'height:'+v+'%'"></div></template></div>
+      <div class="card-label">Passed</div>
+    </div>
+    <div class="card" title="Average backend response time (last interval)">
+      <div class="card-value" x-text="avgLatency">—</div>
+      <div class="sparkline"><template x-for="v in spark('latencyCount')"><div class="spark-bar spark-teal" :style="'height:'+v+'%'"></div></template></div>
+      <div class="card-label">Avg Latency</div>
+    </div>
+    <div class="card" title="Maximum backend response time (last interval)">
+      <div class="card-value" x-text="maxLatency">—</div>
+      <div class="sparkline"><template x-for="v in spark('latencyMaxUs')"><div class="spark-bar spark-teal" :style="'height:'+v+'%'"></div></template></div>
+      <div class="card-label">Max Latency</div>
+    </div>
+    <div class="card" title="Percentage of 5xx errors from backend (last 30 min)">
+      <div class="card-value" x-text="errorRate">—</div>
+      <div class="sparkline"><template x-for="v in spark('errors5xx')"><div class="spark-bar spark-red" :style="'height:'+v+'%'"></div></template></div>
+      <div class="card-label">Error %</div>
+    </div>
+    <div class="card" title="Total response bytes sent (last 30 min)">
+      <div class="card-value" x-text="fmtBytesVal(totalBytes)">—</div>
+      <div class="sparkline"><template x-for="v in spark('bytesSent')"><div class="spark-bar spark-purple" :style="'height:'+v+'%'"></div></template></div>
+      <div class="card-label">Bandwidth</div>
+      <div class="card-sub" x-text="fmtBytesUnit(totalBytes)"></div>
+    </div>
+  </div>
+</section>
+
+<section class="cards-group">
+  <h3 class="cards-title">Protection Pipeline</h3>
+  <div class="cards">
+    <div class="card" title="IP blacklist + GeoIP country block + soft block (403)">
+      <div class="card-value" x-text="fmtNum(blocked)">—</div>
+      <div class="sparkline"><template x-for="v in spark('blocked')"><div class="spark-bar spark-red" :style="'height:'+v+'%'"></div></template></div>
+      <div class="card-label">Blocked</div>
+      <div class="card-sub">IP / GEO</div>
+    </div>
+    <div class="card" title="Traffic filter rules: block/captcha/log by UA, IP, Country, Platform">
+      <div class="card-value" x-text="fmtNum(filtered)">—</div>
+      <div class="sparkline"><template x-for="v in spark('filtered')"><div class="spark-bar spark-orange" :style="'height:'+v+'%'"></div></template></div>
+      <div class="card-label">Filtered</div>
+      <div class="card-sub">Rules</div>
+    </div>
+    <div class="card" title="Per-IP and per-method rate limiting (429 Too Many Requests)">
+      <div class="card-value" x-text="fmtNum(rateLimited)">—</div>
+      <div class="sparkline"><template x-for="v in spark('rateLimited')"><div class="spark-bar spark-yellow" :style="'height:'+v+'%'"></div></template></div>
+      <div class="card-label">Rate Limited</div>
+      <div class="card-sub">429</div>
+    </div>
+    <div class="card" title="Coraza WAF OWASP CRS rule matches (detection mode adds score, blocking mode returns 403)">
+      <div class="card-value" x-text="fmtNum(wafMatches)">—</div>
+      <div class="sparkline"><template x-for="v in spark('wafMatches')"><div class="spark-bar spark-pink" :style="'height:'+v+'%'"></div></template></div>
+      <div class="card-label">WAF Matches</div>
+      <div class="card-sub">Detection</div>
+    </div>
+    <div class="card" title="Captcha challenges shown (499) — score exceeded CaptchaThreshold">
+      <div class="card-value" x-text="fmtNum(captchaCount)">—</div>
+      <div class="sparkline"><template x-for="v in spark('captcha')"><div class="spark-bar spark-blue" :style="'height:'+v+'%'"></div></template></div>
+      <div class="card-label">CAPTCHA</div>
+      <div class="card-sub">499</div>
+    </div>
+    <div class="card" x-show="captchaPassed > 0" title="Captcha solve rate (passed / shown)">
+      <div class="card-value" x-text="fmtNum(captchaPassed)">—</div>
+      <div class="sparkline"><template x-for="v in spark('captchaPass')"><div class="spark-bar spark-green" :style="'height:'+v+'%'"></div></template></div>
+      <div class="card-label">CAPTCHA Pass</div>
+      <div class="card-sub" x-text="captchaCount > 0 ? (captchaPassed / captchaCount * 100).toFixed(1) + '% solve rate' : ''"></div>
+    </div>
+    <div class="card" x-show="signInvalid > 0" title="Invalid/expired/replay request signatures (X-Waf-Sign)">
+      <div class="card-value" x-text="fmtNum(signInvalid)">—</div>
+      <div class="sparkline"><template x-for="v in spark('signInvalid')"><div class="spark-bar spark-purple" :style="'height:'+v+'%'"></div></template></div>
+      <div class="card-label">Sign Invalid</div>
+      <div class="card-sub">HMAC</div>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Traffic <small x-text="'(last 30 min, ' + history.length + ' points)'"></small></h2>
+  <div class="chart">
+    <div class="chart-bars">
+      <template x-for="(p, i) in history" :key="i">
+        <div class="chart-col" :title="(p.incoming||p.requests) + ' req, ' + p.blocked + ' blocked'">
+          <div class="chart-bar" :style="'height:' + chartHeight(p.incoming||p.requests, 'incoming') + '%'"></div>
+          <div class="chart-bar chart-bar-red" :style="'height:' + chartHeight(p.blocked, 'blocked') + '%'" x-show="p.blocked > 0"></div>
+        </div>
+      </template>
+    </div>
+    <div class="chart-legend">
+      <span><span class="legend-dot"></span> Requests</span>
+      <span><span class="legend-dot legend-red"></span> Blocked</span>
+    </div>
+  </div>
+</section>
+
+<section class="panel" x-show="hasTops()">
+  <h2>Top Activity <small>(last 30 min)</small></h2>
+  <div class="sub-tabs">
+    <button class="sub-tab" :class="topsSubTab === 'traffic' && 'active'" @click="topsSubTab = 'traffic'">Traffic</button>
+    <button class="sub-tab" :class="topsSubTab === 'security' && 'active'" @click="topsSubTab = 'security'">Security</button>
+    <button class="sub-tab" :class="topsSubTab === 'details' && 'active'" @click="topsSubTab = 'details'">Details</button>
+  </div>
+
+  <!-- Traffic sub-tab -->
+  <div x-show="topsSubTab === 'traffic'">
+    <div :class="(topsData.countries || []).length > 0 ? 'tops-row' : ''">
+      <div>
+        <h3>IPs</h3>
+        <table class="tops-table">
+          <thead><tr><th>IP</th><th>Country</th><th>ASN</th><th class="num">Total</th><th class="num">Blocked</th><th class="num">%</th></tr></thead>
+          <tbody>
+            <template x-for="e in topsData.ips || []" :key="e.ip">
+              <tr>
+                <td><code x-text="e.ip"></code></td>
+                <td x-text="e.country || '—'"></td>
+                <td :title="e.asnOrg"><code x-text="e.asnOrg || '—'"></code></td>
+                <td class="num" x-text="e.total"></td>
+                <td class="num" x-text="e.blocked"></td>
+                <td class="num" :class="e.blocked > 0 && 'text-red'" x-text="e.total > 0 ? Math.round(e.blocked/e.total*100) + '%' : '0%'"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div x-show="(topsData.countries || []).length > 0">
+        <h3>Countries</h3>
+        <table class="tops-table">
+          <thead><tr><th>Country</th><th class="num">Total</th><th class="num">Blocked</th></tr></thead>
+          <tbody>
+            <template x-for="e in topsData.countries || []" :key="e.key">
+              <tr>
+                <td x-text="e.key"></td>
+                <td class="num" x-text="e.total"></td>
+                <td class="num" x-text="e.blocked"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="tops-row">
+      <div>
+        <h3>Paths</h3>
+        <table class="tops-table">
+          <thead><tr><th>Path</th><th class="num">Total</th><th class="num">Blocked</th></tr></thead>
+          <tbody>
+            <template x-for="e in topsData.paths || []" :key="e.key">
+              <tr>
+                <td :title="e.key"><code x-text="e.key"></code></td>
+                <td class="num" x-text="e.total"></td>
+                <td class="num" x-text="e.blocked"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div x-show="(topsData.platforms || []).length > 0">
+        <h3>Platforms</h3>
+        <table class="tops-table">
+          <thead><tr><th>Platform</th><th class="num">Total</th><th class="num">Blocked</th></tr></thead>
+          <tbody>
+            <template x-for="e in topsData.platforms || []" :key="e.key">
+              <tr>
+                <td x-text="e.key || '(browser)'"></td>
+                <td class="num" x-text="e.total"></td>
+                <td class="num" x-text="e.blocked"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Security sub-tab -->
+  <div x-show="topsSubTab === 'security'">
+    <div class="tops-grid">
+      <div x-show="(topsData.blockedIps || []).length > 0">
+        <h3>Blocked IPs</h3>
+        <table class="tops-table">
+          <thead><tr><th>IP</th><th>Country</th><th>ASN</th><th class="num">Blocked</th><th class="num">Total</th></tr></thead>
+          <tbody>
+            <template x-for="e in topsData.blockedIps || []" :key="e.ip">
+              <tr>
+                <td><code x-text="e.ip"></code></td>
+                <td x-text="e.country || '—'"></td>
+                <td :title="e.asnOrg"><code x-text="e.asnOrg || '—'"></code></td>
+                <td class="num text-red" x-text="e.blocked"></td>
+                <td class="num" x-text="e.total"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div x-show="(topsData.decisions || []).length > 0">
+        <h3>Decisions</h3>
+        <table class="tops-table">
+          <thead><tr><th>Action</th><th class="num">Count</th></tr></thead>
+          <tbody>
+            <template x-for="e in topsData.decisions || []" :key="e.key">
+              <tr>
+                <td><span class="badge" :class="e.key === 'block' || e.key === 'soft_block' ? 'danger' : e.key === 'captcha' ? 'warn' : e.key === 'pass' ? 'on' : 'off'" x-text="e.key"></span></td>
+                <td class="num" x-text="e.total"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="tops-grid" x-show="(topsData.signResults || []).length > 0">
+      <div>
+        <h3>Sign Results</h3>
+        <table class="tops-table">
+          <thead><tr><th>Result</th><th class="num">Count</th></tr></thead>
+          <tbody>
+            <template x-for="e in topsData.signResults || []" :key="e.key">
+              <tr>
+                <td x-text="e.key"></td>
+                <td class="num" x-text="e.total"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div x-show="(topsData.wafRules || []).length > 0" style="margin-bottom:16px">
+      <h3 style="font-size:12px;text-transform:uppercase;color:var(--text2);margin-bottom:8px;letter-spacing:.5px">WAF Rules</h3>
+      <table class="tops-table">
+        <thead><tr><th>Rule ID</th><th class="num">Count</th><th>Description</th></tr></thead>
+        <tbody>
+          <template x-for="e in topsData.wafRules || []" :key="e.key">
+            <tr>
+              <td><code x-text="e.key"></code></td>
+              <td class="num" x-text="e.total"></td>
+              <td x-text="wafRuleName(e.key)"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+    </div>
+  </div>
+
+  <!-- Details sub-tab -->
+  <div x-show="topsSubTab === 'details'">
+    <div class="tops-grid">
+      <div x-show="(topsData.userAgents || []).length > 0">
+        <h3>User Agents</h3>
+        <table class="tops-table">
+          <thead><tr><th>User Agent</th><th class="num">Count</th></tr></thead>
+          <tbody>
+            <template x-for="e in topsData.userAgents || []" :key="e.key">
+              <tr>
+                <td :title="e.key"><code x-text="e.key"></code></td>
+                <td class="num" x-text="e.total"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div x-show="(topsData.referers || []).length > 0">
+        <h3>Referers</h3>
+        <table class="tops-table">
+          <thead><tr><th>Referer</th><th class="num">Count</th></tr></thead>
+          <tbody>
+            <template x-for="e in topsData.referers || []" :key="e.key">
+              <tr>
+                <td :title="e.key"><code x-text="e.key"></code></td>
+                <td class="num" x-text="e.total"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="tops-grid">
+      <div x-show="(topsData.rpcMethods || []).length > 0">
+        <h3>RPC Methods</h3>
+        <table class="tops-table">
+          <thead><tr><th>Method</th><th class="num">Count</th></tr></thead>
+          <tbody>
+            <template x-for="e in topsData.rpcMethods || []" :key="e.key">
+              <tr>
+                <td><code x-text="e.key"></code></td>
+                <td class="num" x-text="e.total"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div x-show="(topsData.asns || []).length > 0">
+        <h3>ASN / Organizations</h3>
+        <table class="tops-table">
+          <thead><tr><th>ASN Org</th><th class="num">Count</th></tr></thead>
+          <tbody>
+            <template x-for="e in topsData.asns || []" :key="e.key">
+              <tr>
+                <td :title="e.key"><code x-text="e.key"></code></td>
+                <td class="num" x-text="e.total"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="panel" x-show="latencies.targets.length > 0 || latencies.methods.length > 0">
+  <h2>Latency Breakdown</h2>
+  <div x-show="latencies.targets.length > 0" style="margin-bottom:16px">
+    <h3 style="font-size:12px;text-transform:uppercase;color:var(--text2);margin-bottom:8px;letter-spacing:.5px">Backends</h3>
+    <table class="tops-table">
+      <thead><tr><th>Target</th><th class="num">Count</th><th class="num">Avg</th><th class="num">P95</th><th class="num">Max</th><th class="num">5xx</th><th class="num">Err%</th></tr></thead>
+      <tbody>
+        <template x-for="e in latencies.targets" :key="e.key">
+          <tr>
+            <td><code x-text="e.key"></code></td>
+            <td class="num" x-text="fmtNum(e.count)"></td>
+            <td class="num" x-text="e.avgMs.toFixed(1) + 'ms'"></td>
+            <td class="num" x-text="e.p95Ms.toFixed(1) + 'ms'"></td>
+            <td class="num" x-text="e.maxMs.toFixed(1) + 'ms'"></td>
+            <td class="num" x-text="fmtNum(targetErrorRate(e.key).errors)"></td>
+            <td class="num" :class="targetErrorRate(e.key).errors > 0 && 'text-red'" x-text="targetErrorRate(e.key).rate"></td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+  <div x-show="latencies.methods.length > 0">
+    <h3 style="font-size:12px;text-transform:uppercase;color:var(--text2);margin-bottom:8px;letter-spacing:.5px">RPC Methods</h3>
+    <table class="tops-table">
+      <thead><tr><th>Method</th><th>Trend</th><th class="num">Count</th><th class="num">Avg</th><th class="num">P95</th><th class="num">Max</th></tr></thead>
+        <tbody>
+          <template x-for="e in latencies.methods" :key="e.key">
+            <tr>
+              <td><code x-text="e.key"></code></td>
+              <td><div class="sparkline sparkline-inline"><template x-for="v in latencySpark(e.key)"><div class="spark-bar spark-teal" :style="'height:'+v+'%'"></div></template></div></td>
+              <td class="num" x-text="fmtNum(e.count)"></td>
+              <td class="num" x-text="e.avgMs.toFixed(1) + 'ms'"></td>
+              <td class="num" x-text="e.p95Ms.toFixed(1) + 'ms'"></td>
+              <td class="num" x-text="e.maxMs.toFixed(1) + 'ms'"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+  </div>
+</section>
+
+</div>
+
+<!-- ==================== TAB: RULES ==================== -->
+<div x-show="mainTab === 'rules'">
+
+<section class="panel">
+  <h2>Blocked Rules</h2>
+  <div class="tabs">
+    <template x-for="t in ['ip','cidr','country']">
+      <button class="tab" :class="activeTab === t && 'active'" @click="activeTab = t; loadBlocks()" x-text="t.toUpperCase()"></button>
+    </template>
+  </div>
+  <table>
+    <thead><tr><th>Value</th><th>Reason</th><th>Added</th><th>Expires</th><th></th></tr></thead>
+    <tbody>
+      <template x-if="blocks.length === 0">
+        <tr><td colspan="5" class="empty">No blocked items</td></tr>
+      </template>
+      <template x-for="e in blocks" :key="e.value">
+        <tr>
+          <td><strong x-text="e.value"></strong></td>
+          <td x-text="e.reason || '—'"></td>
+          <td x-text="fmtTime(e.addedAt)"></td>
+          <td x-text="e.expiresAt ? fmtTime(e.expiresAt) : 'permanent'"></td>
+          <td><button class="btn-remove" @click="removeBlock(e.value)">remove</button></td>
+        </tr>
+      </template>
+    </tbody>
+  </table>
+  <form class="inline-form" @submit.prevent="addBlock()">
+    <select x-model="form.type">
+      <option value="ip">IP</option>
+      <option value="cidr">CIDR</option>
+      <option value="country">Country</option>
+    </select>
+    <input x-model="form.value" placeholder="1.2.3.4" required>
+    <input x-model="form.reason" placeholder="reason">
+    <input x-model="form.duration" placeholder="1h (optional)">
+    <button type="submit">Block</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Traffic Filter Rules</h2>
+  <template x-if="filterRules.length === 0">
+    <p class="empty">No filter rules configured</p>
+  </template>
+  <table x-show="filterRules.length > 0">
+    <thead><tr><th>Name</th><th>Action</th><th>Conditions</th><th>Source</th><th></th></tr></thead>
+    <tbody>
+      <template x-for="r in filterRules" :key="r.name">
+        <tr>
+          <td><strong x-text="r.name"></strong></td>
+          <td><span class="badge" :class="r.action === 'block' ? 'danger' : r.action === 'captcha' ? 'warn' : 'off'" x-text="r.action"></span></td>
+          <td><code x-text="fmtFilterConditions(r)"></code></td>
+          <td x-text="r.source"></td>
+          <td><button class="btn-remove" x-show="r.source === 'api'" @click="removeFilterRule(r.name)">remove</button></td>
+        </tr>
+      </template>
+    </tbody>
+  </table>
+  <form class="inline-form" @submit.prevent="addFilterRule()">
+    <input x-model="filterForm.name" placeholder="rule name" required>
+    <select x-model="filterForm.action">
+      <option value="block">block</option>
+      <option value="captcha">captcha</option>
+      <option value="log">log</option>
+    </select>
+    <input x-model="filterForm.uaPrefix" placeholder="UA prefix (comma-sep)">
+    <input x-model="filterForm.country" placeholder="Country codes (comma-sep)">
+    <button type="submit">Add Rule</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Rate Limit Rules</h2>
+  <template x-if="rules.length === 0">
+    <p class="empty">No rules configured</p>
+  </template>
+  <table x-show="rules.length > 0">
+    <thead><tr><th>Name</th><th>Endpoint</th><th>Methods</th><th>Limit</th><th>Action</th></tr></thead>
+    <tbody>
+      <template x-for="r in rules" :key="r.name">
+        <tr>
+          <td><strong x-text="r.name"></strong></td>
+          <td x-text="r.endpoint || 'all'"></td>
+          <td><code x-text="r.match.join(', ')"></code></td>
+          <td x-text="r.limit"></td>
+          <td x-text="r.action"></td>
+        </tr>
+      </template>
+    </tbody>
+  </table>
+</section>
+
+</div>
+
+<!-- ==================== TAB: EVENTS & CONFIG ==================== -->
+<div x-show="mainTab === 'events'">
+
+<section class="panel">
+  <h2>Recent Events</h2>
+  <template x-if="recentEvents.length === 0">
+    <p class="empty">No events yet</p>
+  </template>
+  <table x-show="recentEvents.length > 0">
+    <thead><tr><th>Time</th><th>Type</th><th>IP</th><th>Path</th><th>Detail</th></tr></thead>
+    <tbody>
+      <template x-for="e in recentEvents" :key="e.time + e.clientIp + e.detail">
+        <tr>
+          <td x-text="e.time"></td>
+          <td><span class="event-type" :class="'evt-' + e.type" x-text="e.type"></span></td>
+          <td x-text="e.clientIp"></td>
+          <td x-text="e.path"></td>
+          <td x-text="e.detail"></td>
+        </tr>
+      </template>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel" x-show="status.proxyStatus">
+  <h2>Proxy / Backends</h2>
+  <table>
+    <thead><tr><th>Target</th><th>Circuit Breaker</th></tr></thead>
+    <tbody>
+      <template x-for="t in (status.proxyStatus && status.proxyStatus.targets) || []" :key="t.url">
+        <tr>
+          <td><code x-text="t.url"></code></td>
+          <td><span class="badge" :class="t.state === 'closed' ? 'on' : t.state === 'open' ? 'danger' : 'warn'" x-text="t.state"></span></td>
+        </tr>
+      </template>
+    </tbody>
+  </table>
+</section>
+
+
+</div>
+
+<!-- ==================== TAB: CONFIG ==================== -->
+<div x-show="mainTab === 'config'">
+
+<template x-if="!cfgData">
+  <p class="empty">Loading configuration...</p>
+</template>
+
+<template x-if="cfgData">
+<div>
+<section class="runtime-state">
+  <div class="rs-card">
+    <div class="rs-label">WAF</div>
+    <div class="rs-value"><span class="rs-dot" :class="cfgData.waf.enabled ? (cfgData.waf.mode === 'blocking' ? 'green' : 'yellow') : 'gray'"></span><span x-text="cfgData.waf.enabled ? cfgData.waf.mode : 'off'"></span></div>
+  </div>
+  <div class="rs-card">
+    <div class="rs-label">RateLimit</div>
+    <div class="rs-value"><span class="rs-dot" :class="cfgData.rateLimit.enabled ? 'green' : 'gray'"></span><span x-text="cfgData.rateLimit.enabled ? 'on' : 'off'"></span></div>
+  </div>
+  <div class="rs-card">
+    <div class="rs-label">Filter</div>
+    <div class="rs-value"><span class="rs-dot" :class="cfgData.trafficFilter.enabled ? 'green' : 'gray'"></span><span x-text="cfgData.trafficFilter.enabled ? 'on (' + cfgData.trafficFilter.ruleCount + ')' : 'off'"></span></div>
+  </div>
+  <div class="rs-card">
+    <div class="rs-label">Signing</div>
+    <div class="rs-value"><span class="rs-dot" :class="cfgData.signing.enabled ? (cfgData.signing.mode === 'blocking' ? 'green' : 'yellow') : 'gray'"></span><span x-text="cfgData.signing.enabled ? cfgData.signing.mode : 'off'"></span></div>
+  </div>
+  <div class="rs-card">
+    <div class="rs-label">Attack Mode</div>
+    <div class="rs-value"><span class="rs-dot" :class="attack.enabled ? 'red' : 'gray'"></span><span x-text="attack.enabled ? (attack.source === 'auto' ? 'auto' : 'manual') : 'off'"></span></div>
+  </div>
+  <div class="rs-card">
+    <div class="rs-label">Captcha</div>
+    <div class="rs-value"><span class="rs-dot" :class="cfgData.captcha.provider ? 'green' : 'gray'"></span><span x-text="cfgData.captcha.provider || 'off'"></span></div>
+  </div>
+  <div class="rs-card">
+    <div class="rs-label">Adaptive</div>
+    <div class="rs-value"><span class="rs-dot" :class="cfgData.adaptive.enabled ? 'green' : 'gray'"></span><span x-text="cfgData.adaptive.enabled ? cfgData.adaptive.mode : 'off'"></span></div>
+  </div>
+  <div class="rs-card">
+    <div class="rs-label">Alerting</div>
+    <div class="rs-value"><span class="rs-dot" :class="cfgData.alerting.enabled ? 'green' : 'gray'"></span><span x-text="cfgData.alerting.enabled ? cfgData.alerting.webhookCount + ' wh' : 'off'"></span></div>
+  </div>
+  <div class="rs-card">
+    <div class="rs-label">Storage</div>
+    <div class="rs-value"><span class="rs-dot green"></span><span x-text="cfgData.storage.backend"></span></div>
+  </div>
+  <div class="rs-card">
+    <div class="rs-label">Bot Verify</div>
+    <div class="rs-value"><span class="rs-dot" :class="cfgData.ip.verifyBots ? 'green' : 'gray'"></span><span x-text="cfgData.ip.verifyBots ? 'on' : 'off'"></span></div>
+  </div>
+  <div class="rs-card">
+    <div class="rs-label">Reputation</div>
+    <div class="rs-value"><span class="rs-dot" :class="cfgData.ip.reputation.enabled ? 'green' : 'gray'"></span><span x-text="cfgData.ip.reputation.enabled ? [cfgData.ip.reputation.firehol && 'FH', cfgData.ip.reputation.tor && 'Tor', cfgData.ip.reputation.datacenter && 'DC'].filter(Boolean).join('+') + (cfgData.ip.reputation.feedCount ? ' +' + cfgData.ip.reputation.feedCount : '') : 'off'"></span></div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Configuration</h2>
+
+  <details class="cfg-section">
+    <summary><span class="cfg-title">Proxy</span> <span class="cfg-summary" x-text="cfgData.proxy.listen + ' → ' + (cfgData.proxy.targetDiscoveryEnabled ? 'SRV:' + cfgData.proxy.targetDiscoveryHost : cfgData.proxy.targets.length + ' targets') + '  CB=' + (cfgData.proxy.cbEnabled ? 'on' : 'off') + '  Body≤' + cfgData.proxy.maxRequestBody"></span></summary>
+    <div class="cfg-body">
+      <div class="cfg-kv"><span>Listen</span><span x-text="cfgData.proxy.listen"></span></div>
+      <div class="cfg-kv" x-show="!cfgData.proxy.targetDiscoveryEnabled"><span>Targets</span><span x-text="(cfgData.proxy.targets||[]).join(', ')"></span></div>
+      <template x-if="cfgData.proxy.targetDiscoveryEnabled">
+        <div>
+          <div class="cfg-kv"><span>Discovery</span><span x-text="'SRV → ' + cfgData.proxy.targetDiscoveryHost"></span></div>
+          <div class="cfg-kv" x-show="cfgData.proxy.targetDiscoveryScheme"><span>Scheme</span><span x-text="cfgData.proxy.targetDiscoveryScheme"></span></div>
+          <div class="cfg-kv" x-show="cfgData.proxy.targetDiscoveryDns"><span>DNS Server</span><span x-text="cfgData.proxy.targetDiscoveryDns"></span></div>
+          <div class="cfg-kv" x-show="cfgData.proxy.targetDiscoveryRefresh"><span>Refresh</span><span x-text="cfgData.proxy.targetDiscoveryRefresh"></span></div>
+          <div class="cfg-kv" x-show="cfgData.proxy.targetDiscoveryTimeout"><span>Resolve Timeout</span><span x-text="cfgData.proxy.targetDiscoveryTimeout"></span></div>
+        </div>
+      </template>
+      <div class="cfg-kv"><span>Service</span><span x-text="cfgData.proxy.serviceName"></span></div>
+      <div class="cfg-kv" x-show="cfgData.proxy.platforms && cfgData.proxy.platforms.length"><span>Platforms</span><span x-text="(cfgData.proxy.platforms||[]).join(', ')"></span></div>
+      <div class="cfg-kv"><span>Timeouts</span><span x-text="'Read=' + cfgData.proxy.readTimeout + '  Write=' + cfgData.proxy.writeTimeout + '  Idle=' + cfgData.proxy.idleTimeout"></span></div>
+      <div class="cfg-kv"><span>Body Limit</span><span x-text="cfgData.proxy.maxRequestBody"></span></div>
+      <div class="cfg-kv"><span>Real IP</span><span x-text="(cfgData.proxy.realIpHeaders||[]).join(', ')"></span></div>
+      <div class="cfg-kv"><span>Trusted Proxies</span><span x-text="(cfgData.proxy.trustedProxies||[]).join(', ')"></span></div>
+      <div class="cfg-kv"><span>Circuit Breaker</span><span x-text="(cfgData.proxy.cbEnabled ? 'on' : 'off') + '  threshold=' + cfgData.proxy.cbThreshold + '  timeout=' + cfgData.proxy.cbTimeout"></span></div>
+      <div class="cfg-kv" x-show="(cfgData.proxy.staticPaths||[]).length || (cfgData.proxy.staticExts||[]).length"><span>Static Bypass</span><span x-text="((cfgData.proxy.staticPaths||[]).join(', ') + '  (' + (cfgData.proxy.staticExts||[]).join(', ') + ')')"></span></div>
+    </div>
+  </details>
+
+  <details class="cfg-section">
+    <summary><span class="cfg-title">WAF</span> <span class="cfg-summary" x-text="cfgData.waf.enabled ? cfgData.waf.mode + '  PL=' + cfgData.waf.paranoiaLevel : 'disabled'"></span></summary>
+    <div class="cfg-body">
+      <div class="cfg-kv"><span>Enabled</span><span x-text="cfgData.waf.enabled ? '✓' : '✗'"></span></div>
+      <div class="cfg-kv"><span>Mode</span><span x-text="cfgData.waf.mode"></span></div>
+      <div class="cfg-kv"><span>Paranoia Level</span><span x-text="cfgData.waf.paranoiaLevel"></span></div>
+    </div>
+  </details>
+
+  <details class="cfg-section">
+    <summary><span class="cfg-title">RateLimit</span> <span class="cfg-summary" x-text="cfgData.rateLimit.enabled ? cfgData.rateLimit.perIp + '  ' + cfgData.rateLimit.action + '  ' + cfgData.rateLimit.rules.length + ' rules  ' + fmtNum(cfgData.rateLimit.maxCounters) + ' counters' : 'disabled'"></span></summary>
+    <div class="cfg-body">
+      <div class="cfg-kv"><span>Per-IP</span><span x-text="cfgData.rateLimit.perIp"></span></div>
+      <div class="cfg-kv"><span>Action</span><span x-text="cfgData.rateLimit.action"></span></div>
+      <div class="cfg-kv"><span>Max Counters</span><span x-text="fmtNum(cfgData.rateLimit.maxCounters)"></span></div>
+      <template x-if="cfgData.rateLimit.rules.length > 0">
+        <div>
+          <h4 class="cfg-sub">Rules</h4>
+          <table>
+            <thead><tr><th>Name</th><th>Endpoint</th><th>Methods</th><th>Limit</th><th>Action</th></tr></thead>
+            <tbody>
+              <template x-for="r in cfgData.rateLimit.rules" :key="r.name">
+                <tr><td x-text="r.name"></td><td x-text="r.endpoint || 'all'"></td><td><code x-text="r.match.join(', ')"></code></td><td x-text="r.limit"></td><td x-text="r.action"></td></tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </template>
+    </div>
+  </details>
+
+  <details class="cfg-section">
+    <summary><span class="cfg-title">IP</span> <span class="cfg-summary" x-text="'GeoIP=' + (cfgData.ip.geoDatabase ? 'on' : 'off') + '  WL=' + cfgData.ip.whitelistCidrs + '  BL=' + cfgData.ip.blacklistCidrs + (cfgData.ip.blockCountries && cfgData.ip.blockCountries.length ? '  Block:' + cfgData.ip.blockCountries.join(',') : '') + (cfgData.ip.captchaCountries && cfgData.ip.captchaCountries.length ? '  Captcha:' + cfgData.ip.captchaCountries.join(',') : '') + (cfgData.ip.reputation && cfgData.ip.reputation.enabled ? '  Rep=on' : '')"></span></summary>
+    <div class="cfg-body">
+      <div class="cfg-kv"><span>GeoIP Country</span><span x-text="cfgData.ip.geoDatabase ? '✓ loaded' : '✗'"></span></div>
+      <div class="cfg-kv"><span>GeoIP ASN</span><span x-text="cfgData.ip.asnDatabase ? '✓ loaded' : '✗'"></span></div>
+      <div class="cfg-kv"><span>Whitelist CIDRs</span><span x-text="cfgData.ip.whitelistCidrs + ' entries'"></span></div>
+      <div class="cfg-kv"><span>Blacklist CIDRs</span><span x-text="cfgData.ip.blacklistCidrs + ' entries'"></span></div>
+      <div class="cfg-kv"><span>Bot Verify</span><span x-text="cfgData.ip.verifyBots ? 'on (' + (cfgData.ip.botDomains||[]).length + ' domains, fakeBotScore=' + cfgData.ip.fakeBotScore + ')' : 'off'"></span></div>
+      <div class="cfg-kv" x-show="cfgData.ip.blockCountries && cfgData.ip.blockCountries.length"><span>Block Countries</span><span x-text="(cfgData.ip.blockCountries||[]).join(', ')"></span></div>
+      <div class="cfg-kv" x-show="cfgData.ip.captchaCountries && cfgData.ip.captchaCountries.length"><span>Captcha Countries</span><span x-text="(cfgData.ip.captchaCountries||[]).join(', ')"></span></div>
+      <div class="cfg-kv" x-show="cfgData.ip.logCountries && cfgData.ip.logCountries.length"><span>Log Countries</span><span x-text="(cfgData.ip.logCountries||[]).join(', ')"></span></div>
+      <template x-if="cfgData.ip.reputation && cfgData.ip.reputation.enabled">
+        <div>
+          <h4 class="cfg-sub">Reputation Feeds</h4>
+          <div class="cfg-kv"><span>Update Interval</span><span x-text="cfgData.ip.reputation.updateInterval"></span></div>
+          <div class="cfg-kv"><span>Score</span><span x-text="'+' + cfgData.ip.reputation.scoreAdjustment"></span></div>
+          <div class="cfg-kv"><span>FireHOL</span><span x-text="cfgData.ip.reputation.firehol ? 'Level ' + cfgData.ip.reputation.fireholLevel : 'off'"></span></div>
+          <div class="cfg-kv"><span>Tor Exit Nodes</span><span x-text="cfgData.ip.reputation.tor ? cfgData.ip.reputation.torAction : 'off'"></span></div>
+          <div class="cfg-kv"><span>Datacenter ASN</span><span x-text="cfgData.ip.reputation.datacenter ? '+' + cfgData.ip.reputation.dcScore : 'off'"></span></div>
+          <div class="cfg-kv" x-show="cfgData.ip.reputation.feedCount > 0"><span>Custom Feeds</span><span x-text="cfgData.ip.reputation.feedCount"></span></div>
+        </div>
+      </template>
+    </div>
+  </details>
+
+  <details class="cfg-section">
+    <summary><span class="cfg-title">TrafficFilter</span> <span class="cfg-summary" x-text="cfgData.trafficFilter.enabled ? 'on  ' + cfgData.trafficFilter.ruleCount + ' rules' : 'disabled'"></span></summary>
+    <div class="cfg-body">
+      <div class="cfg-kv"><span>Enabled</span><span x-text="cfgData.trafficFilter.enabled ? '✓' : '✗'"></span></div>
+      <div class="cfg-kv"><span>Static Rules</span><span x-text="cfgData.trafficFilter.ruleCount"></span></div>
+    </div>
+  </details>
+
+  <details class="cfg-section">
+    <summary><span class="cfg-title">Signing</span> <span class="cfg-summary" x-text="cfgData.signing.enabled ? cfgData.signing.mode + '  TTL=' + cfgData.signing.ttl + '  ' + [cfgData.signing.web && 'Web', cfgData.signing.android && 'Android', cfgData.signing.ios && 'iOS'].filter(Boolean).join('+') + '  ' + cfgData.signing.methods + ' method rules' : 'disabled'"></span></summary>
+    <div class="cfg-body">
+      <div class="cfg-kv"><span>Mode</span><span x-text="cfgData.signing.mode"></span></div>
+      <div class="cfg-kv"><span>TTL</span><span x-text="cfgData.signing.ttl"></span></div>
+      <div class="cfg-kv"><span>Nonce Cache</span><span x-text="fmtNum(cfgData.signing.nonceCache)"></span></div>
+      <div class="cfg-kv"><span>Web</span><span x-text="cfgData.signing.web ? '✓' : '✗'"></span></div>
+      <div class="cfg-kv"><span>Android</span><span x-text="cfgData.signing.android ? '✓' : '✗'"></span></div>
+      <div class="cfg-kv"><span>iOS</span><span x-text="cfgData.signing.ios ? '✓' : '✗'"></span></div>
+      <div class="cfg-kv"><span>Method Rules</span><span x-text="cfgData.signing.methods"></span></div>
+    </div>
+  </details>
+
+  <details class="cfg-section">
+    <summary><span class="cfg-title">Decision</span> <span class="cfg-summary" x-text="'Captcha≥' + cfgData.decision.captchaThreshold + '  Block≥' + cfgData.decision.blockThreshold + '  Fallback=' + cfgData.decision.captchaFallback"></span></summary>
+    <div class="cfg-body">
+      <div class="cfg-kv"><span>Captcha Threshold</span><span x-text="cfgData.decision.captchaThreshold"></span></div>
+      <div class="cfg-kv"><span>Block Threshold</span><span x-text="cfgData.decision.blockThreshold"></span></div>
+      <div class="cfg-kv"><span>Captcha Status</span><span x-text="cfgData.decision.captchaStatusCode"></span></div>
+      <div class="cfg-kv"><span>Block Status</span><span x-text="cfgData.decision.blockStatusCode"></span></div>
+      <div class="cfg-kv"><span>Escalation</span><span x-text="cfgData.decision.captchaToBlock + ' fails → soft block (' + cfgData.decision.captchaToBlockWindow + ' window)'"></span></div>
+      <div class="cfg-kv"><span>Soft Block Duration</span><span x-text="cfgData.decision.softBlockDuration"></span></div>
+      <div class="cfg-kv"><span>Captcha Fallback</span><span x-text="cfgData.decision.captchaFallback"></span></div>
+      <template x-if="cfgData.decision.platforms && cfgData.decision.platforms.length > 0">
+        <div>
+          <h4 class="cfg-sub">Platform Captcha Policy</h4>
+          <table>
+            <thead><tr><th>Platform</th><th>Captcha</th><th>MinVersion</th><th>Fallback</th></tr></thead>
+            <tbody>
+              <template x-for="p in cfgData.decision.platforms" :key="p.platform">
+                <tr><td x-text="p.platform"></td><td x-text="p.captcha ? '✓' : '✗'"></td><td x-text="p.minVersion || '—'"></td><td x-text="p.fallback || '—'"></td></tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </template>
+    </div>
+  </details>
+
+  <details class="cfg-section">
+    <summary><span class="cfg-title">JSONRPC</span> <span class="cfg-summary" x-text="cfgData.jsonrpc.endpoints.length + ' endpoints' + (cfgData.jsonrpc.endpoints.some(e => e.methodWhitelist) ? '  whitelist=on' : '')"></span></summary>
+    <div class="cfg-body">
+      <table>
+        <thead><tr><th>Path</th><th>Name</th><th>Schema</th><th>Refresh</th><th>Whitelist</th><th>MaxBatch</th></tr></thead>
+        <tbody>
+          <template x-for="ep in cfgData.jsonrpc.endpoints" :key="ep.name">
+            <tr><td><code x-text="ep.path"></code></td><td x-text="ep.name"></td><td x-text="ep.schemaUrl || '—'"></td><td x-text="ep.schemaRefresh || '—'"></td><td x-text="ep.methodWhitelist ? '✓' : '✗'"></td><td x-text="ep.maxBatchSize || '∞'"></td></tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </details>
+
+  <details class="cfg-section">
+    <summary><span class="cfg-title">Captcha</span> <span class="cfg-summary" x-text="cfgData.captcha.provider ? cfgData.captcha.provider + '  keys=' + (cfgData.captcha.hasKeys ? '✓' : '✗') + '  cookie=' + cfgData.captcha.cookieTtl : 'not configured'"></span></summary>
+    <div class="cfg-body">
+      <div class="cfg-kv"><span>Provider</span><span x-text="cfgData.captcha.provider || '—'"></span></div>
+      <div class="cfg-kv"><span>Keys Configured</span><span x-text="cfgData.captcha.hasKeys ? '✓' : '✗'"></span></div>
+      <div class="cfg-kv"><span>Cookie Name</span><span x-text="cfgData.captcha.cookieName"></span></div>
+      <div class="cfg-kv"><span>Cookie TTL</span><span x-text="cfgData.captcha.cookieTtl"></span></div>
+      <div class="cfg-kv"><span>IP Cache TTL</span><span x-text="cfgData.captcha.ipCacheTtl"></span></div>
+    </div>
+  </details>
+
+  <details class="cfg-section">
+    <summary><span class="cfg-title">Alerting</span> <span class="cfg-summary" x-text="cfgData.alerting.enabled ? 'on  ' + cfgData.alerting.webhookCount + ' webhooks' : 'disabled'"></span></summary>
+    <div class="cfg-body">
+      <div class="cfg-kv"><span>Enabled</span><span x-text="cfgData.alerting.enabled ? '✓' : '✗'"></span></div>
+      <div class="cfg-kv"><span>Webhooks</span><span x-text="cfgData.alerting.webhookCount"></span></div>
+    </div>
+  </details>
+
+  <details class="cfg-section">
+    <summary><span class="cfg-title">Adaptive</span> <span class="cfg-summary" x-text="cfgData.adaptive.enabled ? cfgData.adaptive.mode + '  RPS×' + cfgData.adaptive.rpsMultiplier + '  Error>' + cfgData.adaptive.errorRate + '%  Latency>' + cfgData.adaptive.latencyMs + 'ms' : 'disabled'"></span></summary>
+    <div class="cfg-body">
+      <div class="cfg-kv"><span>Mode</span><span x-text="cfgData.adaptive.mode"></span></div>
+      <div class="cfg-kv"><span>Eval Interval</span><span x-text="cfgData.adaptive.evalInterval"></span></div>
+      <div class="cfg-kv"><span>Warmup</span><span x-text="cfgData.adaptive.warmupDuration"></span></div>
+      <h4 class="cfg-sub">Triggers</h4>
+      <div class="cfg-kv"><span>RPS</span><span x-text="'×' + cfgData.adaptive.rpsMultiplier + ' (recover ×' + cfgData.adaptive.rpsRecovery + ', min ' + cfgData.adaptive.minRps + ' RPS)'"></span></div>
+      <div class="cfg-kv"><span>Error Rate</span><span x-text="'>' + cfgData.adaptive.errorRate + '%'"></span></div>
+      <div class="cfg-kv"><span>Latency</span><span x-text="'>' + cfgData.adaptive.latencyMs + 'ms'"></span></div>
+      <div class="cfg-kv"><span>Blocked Rate</span><span x-text="'>' + cfgData.adaptive.blockedRate + '%'"></span></div>
+      <div class="cfg-kv"><span>Window</span><span x-text="cfgData.adaptive.window"></span></div>
+      <div class="cfg-kv"><span>Cooldown</span><span x-text="cfgData.adaptive.cooldown"></span></div>
+      <div class="cfg-kv"><span>Duration</span><span x-text="cfgData.adaptive.duration"></span></div>
+    </div>
+  </details>
+
+  <details class="cfg-section">
+    <summary><span class="cfg-title">Storage</span> <span class="cfg-summary" x-text="cfgData.storage.backend + (cfgData.storage.hosts > 0 ? '  ' + cfgData.storage.hosts + ' nodes  ns=' + cfgData.storage.namespace : '')"></span></summary>
+    <div class="cfg-body">
+      <div class="cfg-kv"><span>Backend</span><span x-text="cfgData.storage.backend"></span></div>
+      <div class="cfg-kv" x-show="cfgData.storage.hosts > 0"><span>Hosts</span><span x-text="cfgData.storage.hosts + ' nodes'"></span></div>
+      <div class="cfg-kv" x-show="cfgData.storage.namespace"><span>Namespace</span><span x-text="cfgData.storage.namespace"></span></div>
+    </div>
+  </details>
+
+  <details class="cfg-section">
+    <summary><span class="cfg-title">Management</span> <span class="cfg-summary" x-text="cfgData.management.listen"></span></summary>
+    <div class="cfg-body">
+      <div class="cfg-kv"><span>Listen</span><span x-text="cfgData.management.listen"></span></div>
+    </div>
+  </details>
+
+</section>
+
+</div>
+</template>
+
+</div>
+
+</main>
+
+<footer>wafsrv — <span x-text="status.service"></span> — auto-refresh 5s — <a href="/builder/" style="color:inherit;text-decoration:underline">Config Builder</a></footer>
+
+</div>
+</body>
+</html>

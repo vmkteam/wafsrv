@@ -1,0 +1,69 @@
+[Proxy]
+Listen = ":18080"
+Targets = ["http://127.0.0.1:19990"]
+ServiceName = "e2e-test"
+
+[[JSONRPC.Endpoints]]
+Path = "/rpc/"
+Name = "main"
+
+[Management]
+Listen = "127.0.0.1:18081"
+
+[Logging]
+Level = "warn"
+Format = "json"
+
+[WAF]
+Enabled = true
+Mode = "blocking"
+ParanoiaLevel = 1
+
+[RateLimit]
+Enabled = true
+PerIP = "500/min"
+
+[[RateLimit.Rules]]
+Name = "slow-rpc"
+Endpoint = "main"
+Match = ["pgd.generate", "pgd.diff"]
+Limit = "5/min"
+Action = "block"
+
+[Proxy.Static]
+Paths = ["/static/"]
+Extensions = [".css", ".js"]
+
+[TrafficFilter]
+Enabled = true
+
+[[TrafficFilter.Rules]]
+Name = "e2e-block-bot"
+Action = "block"
+UAPrefix = ["E2EBlockBot/"]
+
+[[TrafficFilter.Rules]]
+Name = "e2e-log-bot"
+Action = "log"
+UAPrefix = ["E2ELogBot/"]
+
+[Signing]
+Enabled = true
+Mode = "detection"
+TTL = "5m"
+
+[Signing.Web]
+Enabled = true
+Secret = "e2e-web-secret-for-testing"
+
+[[Signing.Methods]]
+Name = "e2e-auth"
+Endpoint = "main"
+Methods = ["auth.login"]
+SignFields = ["phone"]
+
+[Decision]
+CaptchaThreshold = 5
+BlockThreshold = 8
+CaptchaToBlock = 3
+SoftBlockDuration = "1m"

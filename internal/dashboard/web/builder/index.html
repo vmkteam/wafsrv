@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>wafsrv Config Builder</title>
+<link rel="stylesheet" href="builder.css">
+<script src="builder-config.js"></script>
+<script src="builder-toml.js"></script>
+<script src="builder-import.js"></script>
+<script src="builder.js"></script>
+<script defer src="../alpine.min.js"></script>
+</head>
+<body>
+
+<div x-data="builder()" x-init="init()">
+
+<header>
+  <h1><a href="/" class="header-link">wafsrv</a> <span class="header-sub">Config Builder</span></h1>
+  <div class="header-actions">
+    <template x-for="f in activeFeatures()" :key="f"><span class="header-badge" x-text="f"></span></template>
+    <button class="btn-header" @click="openImport()">Import</button>
+    <button class="btn-header btn-header-dim" @click="resetConfig()">Reset</button>
+    <button class="theme-toggle" @click="toggleTheme()" x-text="theme === 'dark' ? '◐' : '◑'" title="Toggle theme"></button>
+  </div>
+</header>
+
+<!-- Presets -->
+<section class="presets">
+  <template x-for="p in presetList" :key="p.id">
+    <button class="preset-btn" :class="activePreset === p.id && 'active'" @click="applyPreset(p.id)" x-text="p.label"></button>
+  </template>
+</section>
+
+<div class="builder-layout">
+
+<!-- LEFT: Form -->
+<div class="builder-form">
+
+  <!-- ==================== PROXY ==================== -->
+  <div class="section">
+    <div class="section-header required">
+      <span class="section-title">Proxy</span>
+      <span class="section-badge required">required</span>
+    </div>
+    <div class="section-body">
+      <p class="section-desc">Reverse proxy configuration. Targets are backend URLs (round-robin if multiple). ServiceName is used in metrics and access logs. Deploy behind Nginx/Angie (no SSL).</p>
+      <div class="field">
+        <label>ServiceName <span class="req">*</span></label>
+        <input type="text" x-model="cfg.proxy.serviceName" placeholder="myapp" @input="onChange()" :class="errors.serviceName && 'field-error'">
+        <span class="field-hint" x-show="errors.serviceName" x-text="errors.serviceName"></span>
+      </div>
+      <div class="field">
+        <label><input type="checkbox" x-model="cfg.proxy.targetDiscovery.enabled" @change="onChange()"> DNS SRV Discovery</label>
+        <span class="field-hint">Enable dynamic backend discovery via DNS SRV records (Consul/Nomad). Mutually exclusive with static Targets.</span>
+      </div>
+      <div class="field" x-show="!cfg.proxy.targetDiscovery.enabled">
+        <label>Targets <span class="req">*</span></label>
+        <template x-for="(t, i) in cfg.proxy.targets" :key="i">
+          <div class="field-row">
+            <input type="text" x-model="cfg.proxy.targets[i]" placeholder="http://localhost:3000" @input="onChange()" :class="targetErrors[i] && 'field-error'">
+            <button class="btn-icon" @click="removeTarget(i)" x-show="cfg.proxy.targets.length > 1" title="Remove">&times;</button>
+          </div>
+        </template>
+        <button class="btn-add" @click="addTarget()">+ Add target</button>
+      </div>
+      <template x-if="cfg.proxy.targetDiscovery.enabled">
+        <div>
+          <div class="field">
+            <label>Hostname <span class="req">*</span></label>
+            <input type="text" x-model="cfg.proxy.targetDiscovery.hostname" placeholder="apisrv.service.consul" @input="onChange()">
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>DNS Server</label><input type="text" x-model="cfg.proxy.targetDiscovery.dnsServer" placeholder="127.0.0.1:8600" @input="onChange()"></div>
+            <div class="field"><label>Scheme</label><input type="text" x-model="cfg.proxy.targetDiscovery.scheme" placeholder="http" @input="onChange()"></div>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>Refresh Interval</label><input type="text" x-model="cfg.proxy.targetDiscovery.refreshInterval" placeholder="1s" @input="onChange()"></div>
+            <div class="field"><label>Resolve Timeout</label><input type="text" x-model="cfg.proxy.targetDiscovery.resolveTimeout" placeholder="3s" @input="onChange()"></div>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>Service</label><input type="text" x-model="cfg.proxy.targetDiscovery.service" placeholder="" @input="onChange()"><span class="field-hint">SRV _service field</span></div>
+            <div class="field"><label>Proto</label><input type="text" x-model="cfg.proxy.targetDiscovery.proto" placeholder="" @input="onChange()"><span class="field-hint">SRV _proto field</span></div>
+          </div>
+        </div>
+      </template>
+      <div class="field">
+        <label>Listen</label>
+        <input type="text" x-model="cfg.proxy.listen" placeholder=":8080" @input="onChange()">
+      </div>
+      <div class="field">
+        <label>Platforms</label>
+        <div class="chips-input" @click="$refs.platformInput.focus()">
+          <template x-for="(v, i) in cfg.proxy.platforms" :key="i">
+            <span class="chip"><span x-text="v"></span><button @click="cfg.proxy.platforms.splice(i,1); onChange()">&times;</button></span>
+          </template>
+          <input type="text" x-ref="platformInput" placeholder="web, ios, android..." @keydown.enter.prevent="addChip('proxy.platforms', $event)" @keydown.comma.prevent="addChip('proxy.platforms', $event)" @keydown.backspace="popChip('proxy.platforms', $event)">
+        </div>
+      </div>
+
+      <details class="sub-section">
+        <summary>Timeouts <span class="sub-hint" x-text="cfg.proxy.timeouts.read !== '30s' || cfg.proxy.timeouts.write !== '30s' || cfg.proxy.timeouts.idle !== '120s' ? 'modified' : 'defaults'"></span></summary>
+        <div class="sub-body">
+          <div class="field-grid">
+            <div class="field"><label>Read</label><input type="text" x-model="cfg.proxy.timeouts.read" placeholder="30s" @input="onChange()"></div>
+            <div class="field"><label>Write</label><input type="text" x-model="cfg.proxy.timeouts.write" placeholder="30s" @input="onChange()"></div>
+            <div class="field"><label>Idle</label><input type="text" x-model="cfg.proxy.timeouts.idle" placeholder="120s" @input="onChange()"></div>
+          </div>
+        </div>
+      </details>
+      <details class="sub-section">
+        <summary>Limits <span class="sub-hint" x-text="cfg.proxy.limits.maxRequestBody !== '1MB' ? cfg.proxy.limits.maxRequestBody : 'default 1MB'"></span></summary>
+        <div class="sub-body">
+          <div class="field"><label>MaxRequestBody</label><input type="text" x-model="cfg.proxy.limits.maxRequestBody" placeholder="1MB" @input="onChange()"></div>
+        </div>
+      </details>
+      <details class="sub-section">
+        <summary>Real IP</summary>
+        <div class="sub-body">
+          <div class="field">
+            <label>Headers</label>
+            <div class="chips-input" @click="$refs.realIpHeaderInput.focus()">
+              <template x-for="(v, i) in cfg.proxy.realIP.headers" :key="i"><span class="chip"><span x-text="v"></span><button @click="cfg.proxy.realIP.headers.splice(i,1); onChange()">&times;</button></span></template>
+              <input type="text" x-ref="realIpHeaderInput" placeholder="X-Real-IP..." @keydown.enter.prevent="addChip('proxy.realIP.headers', $event)" @keydown.comma.prevent="addChip('proxy.realIP.headers', $event)" @keydown.backspace="popChip('proxy.realIP.headers', $event)">
+            </div>
+          </div>
+          <div class="field">
+            <label>Trusted Proxies</label>
+            <div class="chips-input" @click="$refs.trustedInput.focus()">
+              <template x-for="(v, i) in cfg.proxy.realIP.trustedProxies" :key="i"><span class="chip"><span x-text="v"></span><button @click="cfg.proxy.realIP.trustedProxies.splice(i,1); onChange()">&times;</button></span></template>
+              <input type="text" x-ref="trustedInput" placeholder="10.0.0.0/8..." @keydown.enter.prevent="addChip('proxy.realIP.trustedProxies', $event)" @keydown.comma.prevent="addChip('proxy.realIP.trustedProxies', $event)" @keydown.backspace="popChip('proxy.realIP.trustedProxies', $event)">
+            </div>
+          </div>
+        </div>
+      </details>
+      <details class="sub-section">
+        <summary>Circuit Breaker</summary>
+        <div class="sub-body">
+          <div class="field"><label class="toggle-label"><input type="checkbox" x-model="cfg.proxy.circuitBreaker.enabled" @change="onChange()"> Enabled</label></div>
+          <div class="field-grid">
+            <div class="field"><label>Threshold</label><input type="number" x-model.number="cfg.proxy.circuitBreaker.threshold" placeholder="10" @input="onChange()"></div>
+            <div class="field"><label>Timeout</label><input type="text" x-model="cfg.proxy.circuitBreaker.timeout" placeholder="30s" @input="onChange()"></div>
+          </div>
+        </div>
+      </details>
+      <details class="sub-section">
+        <summary>Static Bypass</summary>
+        <div class="sub-body">
+          <div class="field">
+            <label>Paths</label>
+            <div class="chips-input" @click="$refs.staticPathInput.focus()">
+              <template x-for="(v, i) in cfg.proxy.static.paths" :key="i"><span class="chip"><span x-text="v"></span><button @click="cfg.proxy.static.paths.splice(i,1); onChange()">&times;</button></span></template>
+              <input type="text" x-ref="staticPathInput" placeholder="/assets/, /static/..." @keydown.enter.prevent="addChip('proxy.static.paths', $event)" @keydown.comma.prevent="addChip('proxy.static.paths', $event)" @keydown.backspace="popChip('proxy.static.paths', $event)">
+            </div>
+          </div>
+          <div class="field">
+            <label>Extensions</label>
+            <div class="chips-input" @click="$refs.staticExtInput.focus()">
+              <template x-for="(v, i) in cfg.proxy.static.extensions" :key="i"><span class="chip"><span x-text="v"></span><button @click="cfg.proxy.static.extensions.splice(i,1); onChange()">&times;</button></span></template>
+              <input type="text" x-ref="staticExtInput" placeholder=".css, .js, .png..." @keydown.enter.prevent="addChip('proxy.static.extensions', $event)" @keydown.comma.prevent="addChip('proxy.static.extensions', $event)" @keydown.backspace="popChip('proxy.static.extensions', $event)">
+            </div>
+          </div>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <!-- ==================== JSONRPC ==================== -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">JSONRPC</span>
+      <span class="section-summary" x-text="cfg.jsonrpc.endpoints.length + ' endpoint(s)'"></span>
+    </div>
+    <div class="section-body">
+      <p class="section-desc">JSON-RPC endpoint detection. POST requests to these paths are parsed for method names (single + batch). Enable Deep Inspection for schema-based method whitelist and batch size limits.</p>
+      <template x-for="(ep, i) in cfg.jsonrpc.endpoints" :key="i">
+        <div class="item-card">
+          <div class="item-header">
+            <span x-text="ep.name || 'endpoint ' + (i+1)"></span>
+            <button class="btn-icon" @click="cfg.jsonrpc.endpoints.splice(i,1); onChange()" x-show="cfg.jsonrpc.endpoints.length > 1">&times;</button>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>Path</label><input type="text" x-model="cfg.jsonrpc.endpoints[i].path" placeholder="/rpc/" @input="onChange()"></div>
+            <div class="field"><label>Name</label><input type="text" x-model="cfg.jsonrpc.endpoints[i].name" placeholder="main" @input="onChange()"></div>
+          </div>
+          <details class="sub-section">
+            <summary>Deep Inspection</summary>
+            <div class="sub-body">
+              <div class="field"><label>Schema URL</label><input type="text" x-model="cfg.jsonrpc.endpoints[i].schemaURL" placeholder="/rpc/ (relative to target)" @input="onChange()"></div>
+              <div class="field"><label>Schema Refresh</label><input type="text" x-model="cfg.jsonrpc.endpoints[i].schemaRefresh" placeholder="5m" @input="onChange()"></div>
+              <div class="field"><label class="toggle-label"><input type="checkbox" x-model="cfg.jsonrpc.endpoints[i].methodWhitelist" @change="onChange()"> Method Whitelist</label></div>
+              <div class="field"><label>Max Batch Size</label><input type="number" x-model.number="cfg.jsonrpc.endpoints[i].maxBatchSize" placeholder="0 = no limit" @input="onChange()"></div>
+            </div>
+          </details>
+        </div>
+      </template>
+      <button class="btn-add" @click="addEndpoint()">+ Add endpoint</button>
+    </div>
+  </div>
+
+  <!-- ==================== WAF ==================== -->
+  <div class="section" :class="!cfg.waf.enabled && 'section-off'">
+    <div class="section-header">
+      <label class="toggle-label"><input type="checkbox" x-model="cfg.waf.enabled" @change="onChange()"> <span class="section-title">WAF</span></label>
+      <span class="section-summary" x-text="cfg.waf.enabled ? cfg.waf.mode + ' PL=' + cfg.waf.paranoiaLevel : 'disabled'"></span>
+    </div>
+    <div class="section-body" x-show="cfg.waf.enabled" x-collapse>
+      <p class="section-desc">Coraza WAF engine with OWASP Core Rule Set (CRS v4). Detection mode logs matches and adds WAF score (+5). Blocking mode returns 403 on match. Paranoia level 1 is safe for most APIs; level 2+ may need rule exclusions.</p>
+      <div class="field-grid">
+        <div class="field">
+          <label>Mode</label>
+          <select x-model="cfg.waf.mode" @change="onChange()">
+            <option value="detection">detection</option>
+            <option value="blocking">blocking</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Paranoia Level</label>
+          <select x-model.number="cfg.waf.paranoiaLevel" @change="onChange()">
+            <option value="1">1 (safe)</option>
+            <option value="2">2 (moderate)</option>
+            <option value="3">3 (strict)</option>
+            <option value="4">4 (paranoid)</option>
+          </select>
+        </div>
+      </div>
+      <p class="field-note">Start with detection mode. Switch to blocking after reviewing logs.</p>
+    </div>
+  </div>
+
+  <!-- ==================== RATELIMIT ==================== -->
+  <div class="section" :class="!cfg.rateLimit.enabled && 'section-off'">
+    <div class="section-header">
+      <label class="toggle-label"><input type="checkbox" x-model="cfg.rateLimit.enabled" @change="onChange()"> <span class="section-title">RateLimit</span></label>
+      <span class="section-summary" x-text="cfg.rateLimit.enabled ? cfg.rateLimit.perIP + ' ' + cfg.rateLimit.action + ' ' + cfg.rateLimit.rules.length + ' rules' : 'disabled'"></span>
+    </div>
+    <div class="section-body" x-show="cfg.rateLimit.enabled" x-collapse>
+      <p class="section-desc">Per-IP token bucket rate limiting. Global limit uses IP only. Per-method rules use composite key IP:Platform:fnv32(UA) to prevent NAT collateral damage. Rate format: N/(sec|min|hour).</p>
+      <div class="field-grid">
+        <div class="field">
+          <label>Per-IP Rate</label>
+          <input type="text" x-model="cfg.rateLimit.perIP" placeholder="100/min" @input="onChange()" :class="errors.rlPerIP && 'field-error'">
+          <span class="field-hint" x-show="errors.rlPerIP" x-text="errors.rlPerIP"></span>
+        </div>
+        <div class="field">
+          <label>Action</label>
+          <select x-model="cfg.rateLimit.action" @change="onChange()">
+            <option value="block">block (403)</option>
+            <option value="throttle">throttle (add score)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Max Counters</label>
+          <input type="number" x-model.number="cfg.rateLimit.maxCounters" placeholder="100000" @input="onChange()">
+        </div>
+      </div>
+
+      <!-- Rules -->
+      <h4 class="section-sub">Rules</h4>
+      <template x-for="(r, i) in cfg.rateLimit.rules" :key="i">
+        <div class="item-card">
+          <div class="item-header">
+            <span x-text="r.name || 'rule ' + (i+1)"></span>
+            <button class="btn-icon" @click="removeRateLimitRule(i)">&times;</button>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>Name</label><input type="text" x-model="cfg.rateLimit.rules[i].name" placeholder="login" @input="onChange()"></div>
+            <div class="field">
+              <label>Endpoint</label>
+              <select x-model="cfg.rateLimit.rules[i].endpoint" @change="onChange()">
+                <option value="">all</option>
+                <template x-for="n in endpointNames()" :key="n"><option :value="n" x-text="n"></option></template>
+              </select>
+            </div>
+            <div class="field"><label>Limit</label><input type="text" x-model="cfg.rateLimit.rules[i].limit" placeholder="10/min" @input="onChange()"></div>
+          </div>
+          <div class="field">
+            <label>Methods</label>
+            <div class="chips-input">
+              <template x-for="(m, mi) in r.match" :key="mi"><span class="chip"><span x-text="m"></span><button @click="cfg.rateLimit.rules[i].match.splice(mi,1); onChange()">&times;</button></span></template>
+              <input type="text" placeholder="auth.login, sms.send..." @keydown.enter.prevent="addChip('rateLimit.rules.' + i + '.match', $event)" @keydown.comma.prevent="addChip('rateLimit.rules.' + i + '.match', $event)" @keydown.backspace="popChip('rateLimit.rules.' + i + '.match', $event)">
+            </div>
+          </div>
+          <div class="field">
+            <label>Action override</label>
+            <select x-model="cfg.rateLimit.rules[i].action" @change="onChange()">
+              <option value="">inherit</option>
+              <option value="block">block</option>
+              <option value="throttle">throttle</option>
+            </select>
+          </div>
+        </div>
+      </template>
+      <button class="btn-add" @click="addRateLimitRule()">+ Add rule</button>
+    </div>
+  </div>
+
+  <!-- ==================== IP ==================== -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">IP Intelligence</span>
+      <span class="section-summary" x-text="(cfg.ip.geoDatabase ? 'GeoIP ' : '') + (cfg.ip.whitelist.cidrs.length ? 'WL=' + cfg.ip.whitelist.cidrs.length + ' ' : '') + (cfg.ip.blacklist.cidrs.length ? 'BL=' + cfg.ip.blacklist.cidrs.length : '') || 'not configured'"></span>
+    </div>
+    <div class="section-body">
+      <p class="section-desc">IP intelligence: whitelist (skip all checks), blacklist (403), GeoIP country/ASN lookup, bot verification (PTR + known IP ranges for Googlebot, Bingbot, Yandex).</p>
+      <div class="field-grid">
+        <div class="field"><label>GeoIP Country DB</label><input type="text" x-model="cfg.ip.geoDatabase" placeholder="data/dbip-country-lite.mmdb" @input="onChange()"></div>
+        <div class="field"><label>GeoIP ASN DB</label><input type="text" x-model="cfg.ip.asnDatabase" placeholder="data/dbip-asn-lite.mmdb" @input="onChange()"></div>
+      </div>
+      <p class="field-note">Run <code>make geo-download</code> to fetch free db-ip.com databases.</p>
+
+      <details class="sub-section">
+        <summary>Whitelist <span class="sub-hint" x-text="cfg.ip.whitelist.cidrs.length + ' CIDRs'"></span></summary>
+        <div class="sub-body">
+          <div class="field">
+            <label>CIDRs</label>
+            <div class="chips-input">
+              <template x-for="(v, i) in cfg.ip.whitelist.cidrs" :key="i"><span class="chip"><span x-text="v"></span><button @click="cfg.ip.whitelist.cidrs.splice(i,1); onChange()">&times;</button></span></template>
+              <input type="text" placeholder="10.0.0.0/8..." @keydown.enter.prevent="addChip('ip.whitelist.cidrs', $event)" @keydown.comma.prevent="addChip('ip.whitelist.cidrs', $event)" @keydown.backspace="popChip('ip.whitelist.cidrs', $event)">
+            </div>
+          </div>
+          <div class="field"><label class="toggle-label"><input type="checkbox" x-model="cfg.ip.whitelist.verifyBots" @change="onChange()"> Verify Bots (PTR + IP ranges)</label></div>
+        </div>
+      </details>
+
+      <details class="sub-section">
+        <summary>Blacklist <span class="sub-hint" x-text="cfg.ip.blacklist.cidrs.length + ' CIDRs'"></span></summary>
+        <div class="sub-body">
+          <div class="field">
+            <label>CIDRs</label>
+            <div class="chips-input">
+              <template x-for="(v, i) in cfg.ip.blacklist.cidrs" :key="i"><span class="chip"><span x-text="v"></span><button @click="cfg.ip.blacklist.cidrs.splice(i,1); onChange()">&times;</button></span></template>
+              <input type="text" placeholder="203.0.113.0/24..." @keydown.enter.prevent="addChip('ip.blacklist.cidrs', $event)" @keydown.comma.prevent="addChip('ip.blacklist.cidrs', $event)" @keydown.backspace="popChip('ip.blacklist.cidrs', $event)">
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <details class="sub-section">
+        <summary>Bot Verify <span class="sub-hint" x-text="cfg.ip.whitelist.verifyBots ? 'on' : 'off'"></span></summary>
+        <div class="sub-body">
+          <div class="field">
+            <label>Bot Domains</label>
+            <div class="chips-input">
+              <template x-for="(v, i) in cfg.ip.whitelist.botDomains" :key="i"><span class="chip"><span x-text="v"></span><button @click="cfg.ip.whitelist.botDomains.splice(i,1); onChange()">&times;</button></span></template>
+              <input type="text" placeholder="googlebot.com..." @keydown.enter.prevent="addChip('ip.whitelist.botDomains', $event)" @keydown.comma.prevent="addChip('ip.whitelist.botDomains', $event)" @keydown.backspace="popChip('ip.whitelist.botDomains', $event)">
+            </div>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>Cache Size</label><input type="number" x-model.number="cfg.ip.whitelist.botVerify.cacheSize" @input="onChange()"></div>
+            <div class="field"><label>Cache TTL</label><input type="text" x-model="cfg.ip.whitelist.botVerify.cacheTTL" placeholder="1h" @input="onChange()"></div>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>DNS Timeout</label><input type="text" x-model="cfg.ip.whitelist.botVerify.dnsTimeout" placeholder="2s" @input="onChange()"></div>
+            <div class="field"><label>Ranges Refresh</label><input type="text" x-model="cfg.ip.whitelist.botVerify.rangesRefresh" placeholder="24h" @input="onChange()"></div>
+          </div>
+          <div class="field"><label>Fake Bot Score</label><input type="number" step="0.1" x-model.number="cfg.ip.whitelist.botVerify.fakeBotScore" @input="onChange()"></div>
+        </div>
+      </details>
+
+      <details class="sub-section">
+        <summary>Countries <span class="sub-hint" x-text="(cfg.ip.countries.block.length + cfg.ip.countries.captcha.length + cfg.ip.countries.log.length) + ' codes'"></span></summary>
+        <div class="sub-body">
+          <div class="field">
+            <label>Block (403)</label>
+            <div class="chips-input">
+              <template x-for="(v, i) in cfg.ip.countries.block" :key="i"><span class="chip chip-red"><span x-text="v"></span><button @click="cfg.ip.countries.block.splice(i,1); onChange()">&times;</button></span></template>
+              <input type="text" placeholder="KP, IR..." @keydown.enter.prevent="addChip('ip.countries.block', $event)" @keydown.comma.prevent="addChip('ip.countries.block', $event)" @keydown.backspace="popChip('ip.countries.block', $event)">
+            </div>
+          </div>
+          <div class="field">
+            <label>Captcha (add score)</label>
+            <div class="chips-input">
+              <template x-for="(v, i) in cfg.ip.countries.captcha" :key="i"><span class="chip chip-yellow"><span x-text="v"></span><button @click="cfg.ip.countries.captcha.splice(i,1); onChange()">&times;</button></span></template>
+              <input type="text" placeholder="CN, VN, TH..." @keydown.enter.prevent="addChip('ip.countries.captcha', $event)" @keydown.comma.prevent="addChip('ip.countries.captcha', $event)" @keydown.backspace="popChip('ip.countries.captcha', $event)">
+            </div>
+          </div>
+          <div class="field">
+            <label>Log only</label>
+            <div class="chips-input">
+              <template x-for="(v, i) in cfg.ip.countries.log" :key="i"><span class="chip"><span x-text="v"></span><button @click="cfg.ip.countries.log.splice(i,1); onChange()">&times;</button></span></template>
+              <input type="text" placeholder="BR, IN..." @keydown.enter.prevent="addChip('ip.countries.log', $event)" @keydown.comma.prevent="addChip('ip.countries.log', $event)" @keydown.backspace="popChip('ip.countries.log', $event)">
+            </div>
+          </div>
+          <p class="field-note">ISO 3166-1 alpha-2 codes. Requires GeoIP database.</p>
+        </div>
+      </details>
+
+      <details class="sub-section">
+        <summary>Reputation Feeds <span class="sub-hint" x-text="cfg.ip.reputation.enabled ? 'on' : 'off'"></span></summary>
+        <div class="sub-body">
+          <p class="section-desc">Dynamic IP blacklists: FireHOL, Tor exit nodes, datacenter ASN detection, custom feeds. Feeds are refreshed periodically in the background.</p>
+          <div class="field"><label class="toggle-label"><input type="checkbox" x-model="cfg.ip.reputation.enabled" @change="onChange()"> Enable Reputation Feeds</label></div>
+          <div x-show="cfg.ip.reputation.enabled">
+            <div class="field-grid">
+              <div class="field"><label>Update Interval</label><input type="text" x-model="cfg.ip.reputation.updateInterval" placeholder="1h" @input="onChange()"></div>
+              <div class="field"><label>Score Adjustment</label><input type="number" step="0.1" x-model.number="cfg.ip.reputation.scoreAdjustment" @input="onChange()"><span class="field-note">+score for listed IPs</span></div>
+            </div>
+
+            <h4 class="section-sub">FireHOL</h4>
+            <div class="field"><label class="toggle-label"><input type="checkbox" x-model="cfg.ip.reputation.firehol.enabled" @change="onChange()"> Enable FireHOL</label></div>
+            <div class="field" x-show="cfg.ip.reputation.firehol.enabled">
+              <label>Level</label>
+              <select x-model.number="cfg.ip.reputation.firehol.level" @change="onChange()">
+                <option value="1">1 — minimal false positives (~20K IPs)</option>
+                <option value="2">2 — broader coverage (~50K IPs)</option>
+              </select>
+            </div>
+
+            <h4 class="section-sub">Tor Exit Nodes</h4>
+            <div class="field"><label class="toggle-label"><input type="checkbox" x-model="cfg.ip.reputation.tor.enabled" @change="onChange()"> Enable Tor Detection</label></div>
+            <div class="field" x-show="cfg.ip.reputation.tor.enabled">
+              <label>Action</label>
+              <select x-model="cfg.ip.reputation.tor.action" @change="onChange()">
+                <option value="score">score (+ScoreAdjustment)</option>
+                <option value="captcha">captcha (force challenge)</option>
+                <option value="block">block (403)</option>
+              </select>
+            </div>
+
+            <h4 class="section-sub">Datacenter ASN</h4>
+            <div class="field"><label class="toggle-label"><input type="checkbox" x-model="cfg.ip.reputation.datacenter.enabled" @change="onChange()"> Enable Datacenter Detection</label></div>
+            <div x-show="cfg.ip.reputation.datacenter.enabled">
+              <div class="field"><label>Score Adjustment</label><input type="number" step="0.1" x-model.number="cfg.ip.reputation.datacenter.scoreAdjustment" @input="onChange()"><span class="field-note">+score for datacenter IPs (AWS, GCP, Azure, Hetzner...)</span></div>
+              <div class="field">
+                <label>Extra ASNs</label>
+                <div class="chips-input">
+                  <template x-for="(v, i) in cfg.ip.reputation.datacenter.extraASNs" :key="i"><span class="chip"><span x-text="v"></span><button @click="cfg.ip.reputation.datacenter.extraASNs.splice(i,1); onChange()">&times;</button></span></template>
+                  <input type="text" placeholder="14061, 16509..." @keydown.enter.prevent="addChip('ip.reputation.datacenter.extraASNs', $event, true)" @keydown.comma.prevent="addChip('ip.reputation.datacenter.extraASNs', $event, true)" @keydown.backspace="popChip('ip.reputation.datacenter.extraASNs', $event)">
+                </div>
+              </div>
+            </div>
+
+            <h4 class="section-sub">Custom Feeds</h4>
+            <p class="field-note">External IP lists (one IP/CIDR per line, # comments).</p>
+            <template x-for="(f, i) in cfg.ip.reputation.feeds" :key="i">
+              <div class="item-card">
+                <div class="item-header">
+                  <span x-text="f.name || 'feed ' + (i+1)"></span>
+                  <button class="btn-icon" @click="cfg.ip.reputation.feeds.splice(i,1); onChange()">&times;</button>
+                </div>
+                <div class="field-grid">
+                  <div class="field"><label>Name</label><input type="text" x-model="cfg.ip.reputation.feeds[i].name" placeholder="my-blocklist" @input="onChange()"></div>
+                  <div class="field">
+                    <label>Action</label>
+                    <select x-model="cfg.ip.reputation.feeds[i].action" @change="onChange()">
+                      <option value="score">score</option>
+                      <option value="block">block</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="field"><label>URL</label><input type="text" x-model="cfg.ip.reputation.feeds[i].url" placeholder="https://example.com/blocklist.txt" @input="onChange()"></div>
+              </div>
+            </template>
+            <button class="btn-add" @click="cfg.ip.reputation.feeds.push({name:'',url:'',action:'score'}); onChange()">+ Add feed</button>
+          </div>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <!-- ==================== TRAFFIC FILTER ==================== -->
+  <div class="section" :class="!cfg.trafficFilter.enabled && 'section-off'">
+    <div class="section-header">
+      <label class="toggle-label"><input type="checkbox" x-model="cfg.trafficFilter.enabled" @change="onChange()"> <span class="section-title">TrafficFilter</span></label>
+      <span class="section-summary" x-text="cfg.trafficFilter.enabled ? cfg.trafficFilter.rules.length + ' rules' : 'disabled'"></span>
+    </div>
+    <div class="section-body" x-show="cfg.trafficFilter.enabled" x-collapse>
+      <p class="section-desc">Static traffic filter with AND-semantics per rule. All non-empty conditions must match. Actions: block (403), captcha (add score +5), log (pass, log only). Rules can also be added at runtime via management API.</p>
+      <template x-for="(r, ri) in cfg.trafficFilter.rules" :key="ri">
+        <div class="item-card">
+          <div class="item-header">
+            <span x-text="r.name || 'rule ' + (ri+1)"></span>
+            <button class="btn-icon" @click="removeTrafficRule(ri)">&times;</button>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>Name</label><input type="text" x-model="cfg.trafficFilter.rules[ri].name" placeholder="headless-chrome" @input="onChange()"></div>
+            <div class="field">
+              <label>Action</label>
+              <select x-model="cfg.trafficFilter.rules[ri].action" @change="onChange()">
+                <option value="block">block (403)</option>
+                <option value="captcha">captcha (add score)</option>
+                <option value="log">log only</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Active conditions -->
+          <template x-for="cond in trafficConditions" :key="cond.key">
+            <div class="field" x-show="r[cond.key] && r[cond.key].length > 0">
+              <label x-text="cond.label"></label>
+              <div class="chips-input">
+                <template x-for="(v, vi) in r[cond.key] || []" :key="vi"><span class="chip"><span x-text="v"></span><button @click="cfg.trafficFilter.rules[ri][cond.key].splice(vi,1); onChange()">&times;</button></span></template>
+                <input type="text" :placeholder="cond.label + '...'"
+                  @keydown.enter.prevent="addChip('trafficFilter.rules.' + ri + '.' + cond.key, $event, cond.numeric)"
+                  @keydown.comma.prevent="addChip('trafficFilter.rules.' + ri + '.' + cond.key, $event, cond.numeric)"
+                  @keydown.backspace="popChip('trafficFilter.rules.' + ri + '.' + cond.key, $event)">
+              </div>
+            </div>
+          </template>
+
+          <!-- Add condition dropdown -->
+          <div class="field" x-show="availableConditions(r).length > 0">
+            <select class="add-condition-select" @change="if($event.target.value){addCondition(ri, $event.target.value); $event.target.value=''}">
+              <option value="">+ Add condition...</option>
+              <template x-for="ac in availableConditions(r)" :key="ac.key"><option :value="ac.key" x-text="ac.label"></option></template>
+            </select>
+          </div>
+        </div>
+      </template>
+      <button class="btn-add" @click="addTrafficRule()">+ Add rule</button>
+    </div>
+  </div>
+
+  <!-- ==================== MANAGEMENT ==================== -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Management</span>
+      <span class="section-summary" x-text="cfg.management.listen"></span>
+    </div>
+    <div class="section-body">
+      <p class="section-desc">Management port serves /health, /metrics (Prometheus), /rpc/ (zenrpc API), and dashboard UI. Bind to 127.0.0.1 in production.</p>
+      <div class="field"><label>Listen</label><input type="text" x-model="cfg.management.listen" placeholder="127.0.0.1:8081" @input="onChange()"></div>
+    </div>
+  </div>
+
+  <!-- ==================== SIGNING ==================== -->
+  <div class="section" :class="!cfg.signing.enabled && 'section-off'">
+    <div class="section-header">
+      <label class="toggle-label"><input type="checkbox" x-model="cfg.signing.enabled" @change="onChange()"> <span class="section-title">Signing</span></label>
+      <span class="section-summary" x-text="cfg.signing.enabled ? cfg.signing.mode + ' TTL=' + cfg.signing.ttl : 'disabled'"></span>
+    </div>
+    <div class="section-body" x-show="cfg.signing.enabled" x-collapse>
+      <p class="section-desc">HMAC-SHA256 request signing verification. Protects against replay attacks, parameter tampering, and automated scraping. Header: X-Waf-Sign. Scoring: +3 invalid/expired, +5 replay/mismatch. SignFields-signed requests skip rate limit + captcha.</p>
+      <div class="field-grid">
+        <div class="field">
+          <label>Mode</label>
+          <select x-model="cfg.signing.mode" @change="onChange()">
+            <option value="detection">detection (score)</option>
+            <option value="blocking">blocking (403)</option>
+          </select>
+        </div>
+        <div class="field"><label>TTL</label><input type="text" x-model="cfg.signing.ttl" placeholder="5m" @input="onChange()"></div>
+        <div class="field"><label>Nonce Cache</label><input type="number" x-model.number="cfg.signing.nonceCache" placeholder="100000" @input="onChange()"></div>
+      </div>
+
+      <h4 class="section-sub">Platforms</h4>
+      <template x-for="plat in [{key:'web',label:'Web'},{key:'android',label:'Android'},{key:'ios',label:'iOS'}]">
+        <details class="sub-section">
+          <summary><span x-text="plat.label"></span> <span class="sub-hint" x-text="cfg.signing[plat.key].enabled ? 'enabled' : 'off'"></span></summary>
+          <div class="sub-body">
+            <div class="field"><label class="toggle-label"><input type="checkbox" x-model="cfg.signing[plat.key].enabled" @change="onChange()"> Enabled</label></div>
+            <div class="field"><label>Secret</label><input type="password" x-model="cfg.signing[plat.key].secret" placeholder="your-secret-32-chars" @input="onChange()"></div>
+            <div class="field-grid">
+              <div class="field"><label>Min Version</label><input type="text" x-model="cfg.signing[plat.key].minVersion" placeholder="e.g. 3.0.0" @input="onChange()"></div>
+              <div class="field"><label class="toggle-label"><input type="checkbox" x-model="cfg.signing[plat.key].notifyOnly" @change="onChange()"> Notify Only</label></div>
+            </div>
+          </div>
+        </details>
+      </template>
+
+      <h4 class="section-sub">Method Signing Rules</h4>
+      <template x-for="(m, i) in cfg.signing.methods" :key="i">
+        <div class="item-card">
+          <div class="item-header">
+            <span x-text="m.name || 'method rule ' + (i+1)"></span>
+            <button class="btn-icon" @click="removeSigningMethod(i)">&times;</button>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>Name</label><input type="text" x-model="cfg.signing.methods[i].name" placeholder="auth" @input="onChange()"></div>
+            <div class="field">
+              <label>Endpoint</label>
+              <select x-model="cfg.signing.methods[i].endpoint" @change="onChange()">
+                <option value="">all</option>
+                <template x-for="n in endpointNames()" :key="n"><option :value="n" x-text="n"></option></template>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label>Methods</label>
+            <div class="chips-input">
+              <template x-for="(v, vi) in m.methods" :key="vi"><span class="chip"><span x-text="v"></span><button @click="cfg.signing.methods[i].methods.splice(vi,1); onChange()">&times;</button></span></template>
+              <input type="text" placeholder="auth.login..." @keydown.enter.prevent="addChip('signing.methods.' + i + '.methods', $event)" @keydown.comma.prevent="addChip('signing.methods.' + i + '.methods', $event)" @keydown.backspace="popChip('signing.methods.' + i + '.methods', $event)">
+            </div>
+          </div>
+          <div class="field">
+            <label>Platforms</label>
+            <div class="chips-input">
+              <template x-for="(v, vi) in m.platforms" :key="vi"><span class="chip"><span x-text="v"></span><button @click="cfg.signing.methods[i].platforms.splice(vi,1); onChange()">&times;</button></span></template>
+              <input type="text" placeholder="Web, Android, iOS..." @keydown.enter.prevent="addChip('signing.methods.' + i + '.platforms', $event)" @keydown.comma.prevent="addChip('signing.methods.' + i + '.platforms', $event)" @keydown.backspace="popChip('signing.methods.' + i + '.platforms', $event)">
+            </div>
+          </div>
+          <div class="field">
+            <label>Sign Fields</label>
+            <div class="chips-input">
+              <template x-for="(v, vi) in m.signFields" :key="vi"><span class="chip"><span x-text="v"></span><button @click="cfg.signing.methods[i].signFields.splice(vi,1); onChange()">&times;</button></span></template>
+              <input type="text" placeholder="phone, email..." @keydown.enter.prevent="addChip('signing.methods.' + i + '.signFields', $event)" @keydown.comma.prevent="addChip('signing.methods.' + i + '.signFields', $event)" @keydown.backspace="popChip('signing.methods.' + i + '.signFields', $event)">
+            </div>
+          </div>
+        </div>
+      </template>
+      <button class="btn-add" @click="addSigningMethod()">+ Add method rule</button>
+    </div>
+  </div>
+
+  <!-- ==================== DECISION ==================== -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Decision</span>
+      <span class="section-summary" x-text="'Captcha>=' + cfg.decision.captchaThreshold + ' Block>=' + cfg.decision.blockThreshold + ' Fallback=' + cfg.decision.captchaFallback"></span>
+    </div>
+    <div class="section-body">
+      <p class="section-desc">Decision engine: cumulative WAF score determines action. Sources: WAF match (+5), fake bot (+5), country captcha (+5), traffic filter (+5), signing invalid (+3), signing replay (+5). Escalation: N captcha fails within window triggers soft block.</p>
+      <div class="field-grid">
+        <div class="field"><label>Captcha Threshold</label><input type="number" x-model.number="cfg.decision.captchaThreshold" @input="onChange()"></div>
+        <div class="field"><label>Block Threshold</label><input type="number" x-model.number="cfg.decision.blockThreshold" @input="onChange()"></div>
+        <div class="field">
+          <label>Captcha Fallback</label>
+          <select x-model="cfg.decision.captchaFallback" @change="onChange()">
+            <option value="block">block</option>
+            <option value="pass">pass</option>
+            <option value="log">log</option>
+          </select>
+        </div>
+      </div>
+
+      <details class="sub-section">
+        <summary>Escalation <span class="sub-hint" x-text="cfg.decision.captchaToBlock + ' fails -> soft block'"></span></summary>
+        <div class="sub-body">
+          <div class="field-grid">
+            <div class="field"><label>Captcha Status Code</label><input type="number" x-model.number="cfg.decision.captchaStatusCode" @input="onChange()"></div>
+            <div class="field"><label>Block Status Code</label><input type="number" x-model.number="cfg.decision.blockStatusCode" @input="onChange()"></div>
+            <div class="field"><label>Captcha To Block</label><input type="number" x-model.number="cfg.decision.captchaToBlock" @input="onChange()"></div>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>Captcha To Block Window</label><input type="text" x-model="cfg.decision.captchaToBlockWindow" placeholder="10m" @input="onChange()"></div>
+            <div class="field"><label>Soft Block Duration</label><input type="text" x-model="cfg.decision.softBlockDuration" placeholder="10m" @input="onChange()"></div>
+          </div>
+        </div>
+      </details>
+
+      <h4 class="section-sub">Platform Captcha Policy</h4>
+      <p class="field-note">Configure which platforms support CAPTCHA. Empty = CAPTCHA for all.</p>
+      <template x-for="(p, i) in cfg.decision.platforms" :key="i">
+        <div class="item-card">
+          <div class="item-header">
+            <span x-text="p.platform || 'platform ' + (i+1)"></span>
+            <button class="btn-icon" @click="removeDecisionPlatform(i)">&times;</button>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>Platform</label><input type="text" x-model="cfg.decision.platforms[i].platform" placeholder="ios" @input="onChange()"></div>
+            <div class="field"><label class="toggle-label"><input type="checkbox" x-model="cfg.decision.platforms[i].captcha" @change="onChange()"> Captcha Support</label></div>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>Min Version</label><input type="text" x-model="cfg.decision.platforms[i].minVersion" placeholder="2.5.0" @input="onChange()"></div>
+            <div class="field">
+              <label>Fallback</label>
+              <select x-model="cfg.decision.platforms[i].fallback" @change="onChange()">
+                <option value="">inherit</option>
+                <option value="pass">pass</option>
+                <option value="block">block</option>
+                <option value="log">log</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </template>
+      <button class="btn-add" @click="addDecisionPlatform()">+ Add platform</button>
+    </div>
+  </div>
+
+  <!-- ==================== CAPTCHA ==================== -->
+  <div class="section" :class="!cfg.captcha.provider && 'section-off'">
+    <div class="section-header">
+      <span class="section-title">Captcha</span>
+      <span class="section-summary" x-text="cfg.captcha.provider ? cfg.captcha.provider + (cfg.captcha.provider === 'pow' ? ' built-in' : (cfg.captcha.siteKey ? ' keys=set' : ' keys=empty')) : 'not configured'"></span>
+    </div>
+    <div class="section-body">
+      <p class="section-desc">CAPTCHA provider for the decision engine. Turnstile: free, invisible. hCaptcha: GDPR, 1M/month free. PoW: built-in SHA-256, no API keys, self-hosted. After passing, client gets HMAC cookie (waf_pass). Native apps use IP cache fallback.</p>
+      <div class="field-grid">
+        <div class="field">
+          <label>Provider</label>
+          <select x-model="cfg.captcha.provider" @change="onChange()">
+            <option value="">none</option>
+            <option value="turnstile">Cloudflare Turnstile</option>
+            <option value="hcaptcha">hCaptcha</option>
+            <option value="pow">PoW (built-in, no API keys)</option>
+          </select>
+        </div>
+      </div>
+
+      <div x-show="cfg.captcha.provider">
+        <!-- SiteKey/SecretKey: only for turnstile/hcaptcha -->
+        <div x-show="cfg.captcha.provider !== 'pow'">
+          <div class="field"><label>Site Key</label><input type="text" x-model="cfg.captcha.siteKey" placeholder="your-site-key" @input="onChange()"></div>
+          <div class="field"><label>Secret Key</label><input type="password" x-model="cfg.captcha.secretKey" placeholder="your-secret-key" @input="onChange()"></div>
+          <button class="btn-test-keys" @click="applyTestKeys()">Use test keys (dev only)</button>
+        </div>
+
+        <!-- PoW settings -->
+        <div x-show="cfg.captcha.provider === 'pow'">
+          <p class="field-note">SHA-256 proof-of-work solved in a Web Worker. No external services. Difficulty auto-switches to AttackDifficulty during Under Attack Mode.</p>
+          <div class="field-grid">
+            <div class="field"><label>Difficulty</label><input type="number" x-model.number="cfg.captcha.pow.difficulty" placeholder="50000" @input="onChange()"><span class="field-note">Normal mode (~0.3-0.5s in browser)</span></div>
+            <div class="field"><label>Attack Difficulty</label><input type="number" x-model.number="cfg.captcha.pow.attackDifficulty" placeholder="500000" @input="onChange()"><span class="field-note">Under Attack Mode (~3-5s)</span></div>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>Timeout</label><input type="text" x-model="cfg.captcha.pow.timeout" placeholder="10s" @input="onChange()"></div>
+            <div class="field"><label>Salt TTL</label><input type="text" x-model="cfg.captcha.pow.saltTTL" placeholder="5m" @input="onChange()"><span class="field-note">Challenge expiry (anti-replay)</span></div>
+          </div>
+        </div>
+
+        <details class="sub-section">
+          <summary>Cookie / Cache <span class="sub-hint" x-text="'TTL=' + cfg.captcha.cookieTTL"></span></summary>
+          <div class="sub-body">
+            <div class="field-grid">
+              <div class="field"><label>Cookie Name</label><input type="text" x-model="cfg.captcha.cookieName" placeholder="waf_pass" @input="onChange()"></div>
+              <div class="field"><label>Cookie TTL</label><input type="text" x-model="cfg.captcha.cookieTTL" placeholder="30m" @input="onChange()"></div>
+              <div class="field"><label>IP Cache TTL</label><input type="text" x-model="cfg.captcha.ipCacheTTL" placeholder="30m" @input="onChange()"></div>
+            </div>
+          </div>
+        </details>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== ALERTING ==================== -->
+  <div class="section" :class="!cfg.alerting.enabled && 'section-off'">
+    <div class="section-header">
+      <label class="toggle-label"><input type="checkbox" x-model="cfg.alerting.enabled" @change="onChange()"> <span class="section-title">Alerting</span></label>
+      <span class="section-summary" x-text="cfg.alerting.enabled ? cfg.alerting.webhooks.length + ' webhook(s)' : 'disabled'"></span>
+    </div>
+    <div class="section-body" x-show="cfg.alerting.enabled" x-collapse>
+      <p class="section-desc">Webhook alerts for security events. Supports Slack, Telegram, Discord, or any HTTP endpoint. MinInterval prevents duplicate alerts (dedup per event type).</p>
+      <template x-for="(w, i) in cfg.alerting.webhooks" :key="i">
+        <div class="item-card">
+          <div class="item-header">
+            <span x-text="'Webhook ' + (i+1)"></span>
+            <button class="btn-icon" @click="removeWebhook(i)">&times;</button>
+          </div>
+          <div class="field"><label>URL</label><input type="text" x-model="cfg.alerting.webhooks[i].url" placeholder="https://hooks.slack.com/services/..." @input="onChange()"></div>
+          <div class="field">
+            <label>Events</label>
+            <div class="chips-input">
+              <template x-for="(v, vi) in w.events" :key="vi"><span class="chip"><span x-text="v"></span><button @click="cfg.alerting.webhooks[i].events.splice(vi,1); onChange()">&times;</button></span></template>
+              <input type="text" placeholder="hard_block, under_attack..." @keydown.enter.prevent="addChip('alerting.webhooks.' + i + '.events', $event)" @keydown.comma.prevent="addChip('alerting.webhooks.' + i + '.events', $event)" @keydown.backspace="popChip('alerting.webhooks.' + i + '.events', $event)">
+            </div>
+            <span class="field-note" x-text="'Available: ' + alertEventOptions.join(', ')"></span>
+          </div>
+          <div class="field"><label>Min Interval</label><input type="text" x-model="cfg.alerting.webhooks[i].minInterval" placeholder="5m" @input="onChange()"></div>
+        </div>
+      </template>
+      <button class="btn-add" @click="addWebhook()">+ Add webhook</button>
+    </div>
+  </div>
+
+  <!-- ==================== ADAPTIVE ==================== -->
+  <div class="section" :class="!cfg.adaptive.enabled && 'section-off'">
+    <div class="section-header">
+      <label class="toggle-label"><input type="checkbox" x-model="cfg.adaptive.enabled" @change="onChange()"> <span class="section-title">Adaptive</span></label>
+      <span class="section-summary" x-text="cfg.adaptive.enabled ? cfg.adaptive.mode + ' RPS x' + cfg.adaptive.autoAttack.rpsMultiplier : 'disabled'"></span>
+    </div>
+    <div class="section-body" x-show="cfg.adaptive.enabled" x-collapse>
+      <p class="section-desc">Auto Under Attack Mode. Evaluates traffic metrics and enables attack mode on anomalies. Notify mode: alert + metric only (dry-run). Auto mode: alert + enable attack mode. Manual attack.enable takes priority.</p>
+      <div class="field-grid">
+        <div class="field">
+          <label>Mode</label>
+          <select x-model="cfg.adaptive.mode" @change="onChange()">
+            <option value="notify">notify (alert only)</option>
+            <option value="auto">auto (enable attack mode)</option>
+          </select>
+        </div>
+        <div class="field"><label>Eval Interval</label><input type="text" x-model="cfg.adaptive.evalInterval" placeholder="10s" @input="onChange()"></div>
+        <div class="field"><label>Warmup</label><input type="text" x-model="cfg.adaptive.warmupDuration" placeholder="2m" @input="onChange()"></div>
+      </div>
+      <p class="field-note">Start with notify mode. Switch to auto after tuning thresholds.</p>
+
+      <details class="sub-section" open>
+        <summary>Triggers</summary>
+        <div class="sub-body">
+          <div class="field-grid">
+            <div class="field"><label>RPS Multiplier</label><input type="number" step="0.1" x-model.number="cfg.adaptive.autoAttack.rpsMultiplier" @input="onChange()"></div>
+            <div class="field"><label>RPS Recovery</label><input type="number" step="0.1" x-model.number="cfg.adaptive.autoAttack.rpsRecoveryMultiplier" @input="onChange()"></div>
+            <div class="field"><label>Min RPS</label><input type="number" x-model.number="cfg.adaptive.autoAttack.minRPS" @input="onChange()"></div>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>Error Rate %</label><input type="number" x-model.number="cfg.adaptive.autoAttack.errorRateThreshold" @input="onChange()"></div>
+            <div class="field"><label>Latency ms</label><input type="number" x-model.number="cfg.adaptive.autoAttack.latencyThresholdMs" @input="onChange()"></div>
+            <div class="field"><label>Blocked Rate %</label><input type="number" x-model.number="cfg.adaptive.autoAttack.blockedRateThreshold" @input="onChange()"></div>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>Window</label><input type="text" x-model="cfg.adaptive.autoAttack.window" placeholder="1m" @input="onChange()"></div>
+            <div class="field"><label>Cooldown</label><input type="text" x-model="cfg.adaptive.autoAttack.cooldown" placeholder="5m" @input="onChange()"></div>
+            <div class="field"><label>Duration</label><input type="text" x-model="cfg.adaptive.autoAttack.duration" placeholder="10m" @input="onChange()"></div>
+          </div>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <!-- ==================== STORAGE ==================== -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Storage</span>
+      <span class="section-summary" x-text="cfg.storage.backend + (cfg.storage.backend === 'aerospike' ? ' ' + cfg.storage.aerospike.hosts.length + ' hosts' : '')"></span>
+    </div>
+    <div class="section-body">
+      <p class="section-desc">Shared storage for rate limit counters, captcha escalation, nonce dedup, IP pass cache. Memory: fast, no deps, lost on restart. Aerospike: shared across instances, survives restarts.</p>
+      <div class="field">
+        <label>Backend</label>
+        <select x-model="cfg.storage.backend" @change="onChange()">
+          <option value="memory">memory (single instance)</option>
+          <option value="aerospike">aerospike (multi-instance)</option>
+        </select>
+      </div>
+
+      <div x-show="cfg.storage.backend === 'aerospike'">
+        <div class="field">
+          <label>Hosts</label>
+          <div class="chips-input">
+            <template x-for="(v, i) in cfg.storage.aerospike.hosts" :key="i"><span class="chip"><span x-text="v"></span><button @click="cfg.storage.aerospike.hosts.splice(i,1); onChange()">&times;</button></span></template>
+            <input type="text" placeholder="127.0.0.1:3000..." @keydown.enter.prevent="addChip('storage.aerospike.hosts', $event)" @keydown.comma.prevent="addChip('storage.aerospike.hosts', $event)" @keydown.backspace="popChip('storage.aerospike.hosts', $event)">
+          </div>
+        </div>
+        <div class="field-grid">
+          <div class="field"><label>Namespace</label><input type="text" x-model="cfg.storage.aerospike.namespace" placeholder="wafsrv" @input="onChange()"></div>
+          <div class="field"><label>Key Prefix</label><input type="text" x-model="cfg.storage.aerospike.keyPrefix" placeholder="apisrv: (optional)" @input="onChange()"></div>
+        </div>
+        <p class="field-note">KeyPrefix isolates keys per deployment on a shared cluster. Set to ServiceName + ":" for multi-tenant.</p>
+        <div class="field-grid">
+          <div class="field"><label>Connect Timeout</label><input type="text" x-model="cfg.storage.aerospike.connectTimeout" placeholder="5s" @input="onChange()"></div>
+          <div class="field"><label>Oper Timeout</label><input type="text" x-model="cfg.storage.aerospike.operTimeout" placeholder="50ms" @input="onChange()"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- RIGHT: TOML Preview -->
+<div class="builder-preview">
+  <div class="preview-header">
+    <h2>TOML Output</h2>
+    <div class="preview-actions">
+      <button class="btn-action" @click="copyToml()" x-text="copied ? 'Copied!' : 'Copy'"></button>
+      <button class="btn-action" @click="downloadToml()">Download</button>
+    </div>
+  </div>
+  <div class="preview-info" x-show="Object.keys(errors).length > 0 || Object.keys(targetErrors).length > 0">
+    <span class="preview-warn">Validation errors — check highlighted fields</span>
+  </div>
+  <div class="preview-lines" x-text="lineCount + ' lines'"></div>
+  <pre class="preview-code" x-ref="tomlOutput"><code x-text="toml"></code></pre>
+</div>
+
+</div>
+
+<!-- Import Modal -->
+<div class="modal-overlay" x-show="showImport" x-cloak @click.self="closeImport()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Import TOML</h3>
+      <button class="btn-icon" @click="closeImport()">&times;</button>
+    </div>
+    <p class="field-note">Paste an existing wafsrv TOML config. The form will be populated from it.</p>
+    <textarea class="import-textarea" x-model="importText" placeholder="[Proxy]
+Targets = [&quot;http://localhost:3000&quot;]
+ServiceName = &quot;myapp&quot;
+
+[WAF]
+Enabled = true
+..." rows="16"></textarea>
+    <div class="import-error" x-show="importError" x-text="importError"></div>
+    <div class="modal-actions">
+      <button class="btn-action" @click="closeImport()">Cancel</button>
+      <button class="btn-action btn-primary" @click="doImport()" :disabled="!importText.trim()">Import</button>
+    </div>
+  </div>
+</div>
+
+<footer>wafsrv Config Builder — <a href="https://github.com/vmkteam/wafsrv" target="_blank">docs</a></footer>
+
+</div>
+</body>
+</html>

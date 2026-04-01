@@ -1,0 +1,231 @@
+[Proxy]
+Listen = ":8080"
+Targets = ["http://localhost:3000"]
+ServiceName = "apisrv"
+
+# DNS SRV discovery (alternative to Targets, mutually exclusive)
+# [Proxy.TargetDiscovery]
+# Enabled = true
+# Hostname = "apisrv.service.consul"
+# Scheme = "http"
+# DNSServer = "127.0.0.1:8600"
+# RefreshInterval = "1s"
+# ResolveTimeout = "3s"
+
+[Proxy.Timeouts]
+Read = "30s"
+Write = "30s"
+Idle = "120s"
+
+[Proxy.Limits]
+MaxRequestBody = "1MB"
+
+[Proxy.RealIP]
+Headers = ["X-Real-IP", "X-Forwarded-For"]
+TrustedProxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+
+[Proxy.CircuitBreaker]
+Enabled = true
+Threshold = 10
+Timeout = "30s"
+
+# Static asset bypass: skip WAF, rate limit, decision engine
+# [Proxy.Static]
+# Paths = ["/assets/", "/static/"]
+# Extensions = [".css", ".js", ".png", ".jpg", ".svg", ".ico", ".woff2", ".map"]
+
+[[JSONRPC.Endpoints]]
+Path = "/rpc/"
+Name = "main"
+# SchemaURL = "/rpc/"               # relative → Proxy.Targets[0], auto-detect SMD/OpenRPC
+# SchemaRefresh = "5m"
+# MethodWhitelist = true             # block unknown methods (fail-open if schema unavailable)
+# MaxBatchSize = 20                  # max methods in batch (0 = no limit)
+
+[Management]
+Listen = "127.0.0.1:8081"
+
+# === Traffic Filter (static rules) ===
+
+# [TrafficFilter]
+# Enabled = true
+#
+# [[TrafficFilter.Rules]]
+# Name = "headless-chrome"
+# Action = "block"                    # "block" | "captcha" | "log"
+# UAPrefix = ["HeadlessChrome"]
+#
+# [[TrafficFilter.Rules]]
+# Name = "python-parsers"
+# Action = "block"
+# UAPrefix = ["Python/", "python-requests/"]
+
+# === WAF (Coraza + OWASP CRS) ===
+# Uncomment to enable
+
+# [WAF]
+# Enabled = true
+# Mode = "detection"          # "detection" (log only) | "blocking" (403)
+# ParanoiaLevel = 1           # 1-4
+
+# === Rate Limiting ===
+
+# [RateLimit]
+# Enabled = true
+# PerIP = "100/min"
+#
+# [[RateLimit.Rules]]
+# Name = "login"
+# Endpoint = "main"
+# Match = ["auth.login", "auth.loginByPhone"]
+# Limit = "10/min"
+# Action = "block"
+
+# === IP Intelligence ===
+# GeoIP databases are embedded in the binary (make geo-download before build).
+# Override with external files:
+# [IP]
+# GeoDatabase = "/path/to/dbip-country-lite.mmdb"
+# ASNDatabase = "/path/to/dbip-asn-lite.mmdb"
+#
+# [IP.Whitelist]
+# CIDRs = ["10.0.0.0/8", "172.16.0.0/12"]
+#
+# [IP.Countries]
+# Block = ["KP", "IR"]           # → 403 Forbidden
+# Captcha = ["CN", "VN", "TH"]   # → captcha via decision engine
+# Log = ["BR", "IN"]             # → log only, pass through
+
+# === IP Reputation Feeds ===
+# Dynamic IP blacklists: FireHOL, Tor exit nodes, datacenter ASN detection.
+
+# [IP.Reputation]
+# Enabled = true
+# UpdateInterval = "1h"              # feed refresh interval
+# ScoreAdjustment = 3.0              # +score for listed IPs
+#
+# [IP.Reputation.FireHOL]
+# Enabled = true
+# Level = 1                          # 1 = minimal false positives, 2 = broader coverage
+#
+# [IP.Reputation.Tor]
+# Enabled = true
+# Action = "score"                   # "score" (+3) | "captcha" | "block"
+#
+# [IP.Reputation.Datacenter]
+# Enabled = true
+# ScoreAdjustment = 2.0              # datacenter IP → +2 to WAF score
+# ExtraASNs = []                     # additional ASNs to treat as datacenter
+#
+# # Custom IP feeds (one IP/CIDR per line, # comments)
+# [[IP.Reputation.Feeds]]
+# Name = "my-blocklist"
+# URL = "https://example.com/blocklist.txt"
+# Action = "score"                   # "score" | "block"
+
+# === Request Signing (HMAC-SHA256) ===
+
+# [Signing]
+# Enabled = true
+# Mode = "detection"          # "detection" (score) | "blocking" (403)
+# TTL = "5m"
+# NonceCache = 100000
+#
+# [Signing.Web]
+# Enabled = true
+# Secret = "change-me-web-secret-32-chars"
+#
+# [Signing.Android]
+# Enabled = true
+# Secret = "change-me-android-secret"
+# MinVersion = "3.0.0"
+#
+# [Signing.IOS]
+# Enabled = true
+# Secret = "change-me-ios-secret"
+# MinVersion = "2.5.0"
+#
+# [[Signing.Methods]]
+# Name = "auth"
+# Endpoint = "main"
+# Methods = ["auth.login", "auth.getCode"]
+# Platforms = ["Web", "Android", "iOS"]
+# SignFields = ["phone", "email"]
+
+# === Decision Engine ===
+
+# [Decision]
+# CaptchaThreshold = 5        # score → captcha (499)
+# BlockThreshold = 8          # score → block (403)
+# CaptchaToBlock = 3          # N captcha → soft block
+# CaptchaToBlockWindow = "10m"
+# SoftBlockDuration = "10m"
+# CaptchaFallback = "block"   # default for unknown/empty Platform: "pass" | "block" | "log"
+#
+# # Per-platform captcha support (if empty — captcha for all platforms)
+# [[Decision.Platforms]]
+# Platform = "web"
+# Captcha = true
+#
+# [[Decision.Platforms]]
+# Platform = "desktop"
+# Captcha = true
+#
+# [[Decision.Platforms]]
+# Platform = "widget"
+# Captcha = false
+# Fallback = "pass"           # widgets can't show captcha — pass through
+#
+# [[Decision.Platforms]]
+# Platform = "iOS"
+# Captcha = true
+# MinVersion = "2.5.0"        # captcha supported from this version
+# Fallback = "pass"           # older versions: pass through
+#
+# [[Decision.Platforms]]
+# Platform = "Android"
+# Captcha = true
+# MinVersion = "3.0.0"
+# Fallback = "pass"
+
+# === CAPTCHA ===
+
+# [Captcha]
+# Provider = "turnstile"             # "turnstile" (Cloudflare) | "hcaptcha"
+# SiteKey = ""
+# SecretKey = ""
+
+# hCaptcha test keys (no registration, always passes, no anti-bot protection):
+# [Captcha]
+# Provider = "hcaptcha"
+# SiteKey = "10000000-ffff-ffff-ffff-000000000001"
+# SecretKey = "0x0000000000000000000000000000000000000000"
+
+# === Alerting ===
+
+# [Alerting]
+# Enabled = false
+#
+# [[Alerting.Webhooks]]
+# URL = "https://hooks.slack.com/services/xxx"
+# Events = ["under_attack", "hard_block"]
+# MinInterval = "5m"
+
+# === Adaptive (Auto Under Attack Mode) ===
+
+# [Adaptive]
+# Enabled = true
+# Mode = "notify"                    # "notify" (alert only) | "auto" (enable attack mode)
+# EvalInterval = "10s"
+# WarmupDuration = "2m"
+#
+# [Adaptive.AutoAttack]
+# RPSMultiplier = 3.0                # trigger if RPS > baseline * N (0 = disabled)
+# RPSRecoveryMultiplier = 1.5        # disable when RPS < baseline * N
+# MinRPS = 10                        # ignore RPS trigger if baseline < N
+# ErrorRateThreshold = 20            # trigger if error % > N (0 = disabled)
+# LatencyThresholdMs = 500           # trigger if avg latency > N ms (0 = disabled)
+# BlockedRateThreshold = 50          # trigger if blocked % > N (0 = disabled)
+# Window = "1m"
+# Cooldown = "5m"
+# Duration = "10m"

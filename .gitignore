@@ -1,0 +1,10 @@
+.idea
+.vscode
+cfg/local.toml
+coverage.txt
+coverage.xml
+Makefile.mk
+/wafsrv
+/e2e.test
+.DS_Store
+internal/waf/ip/data/*.mmdb

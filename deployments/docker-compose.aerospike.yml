@@ -1,0 +1,13 @@
+services:
+  aerospike:
+    image: aerospike/aerospike-server:7.2
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./aerospike.conf:/opt/aerospike/aerospike.conf:ro
+    command: ["asd", "--foreground", "--config-file", "/opt/aerospike/aerospike.conf"]
+    healthcheck:
+      test: ["CMD", "asinfo", "-v", "status"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
