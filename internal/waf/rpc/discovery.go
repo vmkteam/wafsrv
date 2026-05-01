@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 type DiscoveryConfig struct {
 	SchemaURL string        // absolute URL to fetch schema
 	Refresh   time.Duration // refresh interval
+	MCPMode   bool          // MCP: POST tools/list instead of GET, parse MCP tool names
 }
 
 // Discovery fetches and caches JSON-RPC method schema from a backend.
@@ -76,6 +78,14 @@ func (d *Discovery) loop(ctx context.Context) {
 }
 
 func (d *Discovery) refresh(ctx context.Context) error {
+	if d.cfg.MCPMode {
+		return d.refreshMCP(ctx)
+	}
+
+	return d.refreshSchema(ctx)
+}
+
+func (d *Discovery) refreshSchema(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.cfg.SchemaURL, nil)
 	if err != nil {
 		d.setError(err)
@@ -114,6 +124,52 @@ func (d *Discovery) refresh(ctx context.Context) error {
 	d.setMethods(methods)
 
 	d.logger.InfoContext(ctx, "schema refreshed", "url", d.cfg.SchemaURL, "methods", len(methods))
+
+	return nil
+}
+
+// refreshMCP sends tools/list JSON-RPC call to discover MCP tools.
+func (d *Discovery) refreshMCP(ctx context.Context) error {
+	rpcBody := []byte(`{"jsonrpc":"2.0","method":"tools/list","id":1}`)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.cfg.SchemaURL, bytes.NewReader(rpcBody))
+	if err != nil {
+		d.setError(err)
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "wafsrv/1.0")
+
+	resp, err := d.client.Do(req)
+	if err != nil {
+		d.setError(err)
+		return fmt.Errorf("rpc: mcp tools/list: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		err = fmt.Errorf("rpc: mcp tools/list: HTTP %d", resp.StatusCode)
+		d.setError(err)
+
+		return err
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		d.setError(err)
+		return fmt.Errorf("rpc: mcp tools/list read: %w", err)
+	}
+
+	methods, err := ParseMCPTools(body)
+	if err != nil {
+		d.setError(err)
+		return err
+	}
+
+	d.setMethods(methods)
+
+	d.logger.InfoContext(ctx, "mcp tools discovered", "url", d.cfg.SchemaURL, "tools", len(methods))
 
 	return nil
 }

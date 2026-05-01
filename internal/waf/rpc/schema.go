@@ -6,7 +6,7 @@ import (
 	"sort"
 )
 
-// ParseSchema auto-detects SMD or OpenRPC format and extracts method names.
+// ParseSchema auto-detects SMD, OpenRPC, or MCP format and extracts method names.
 func ParseSchema(data []byte) ([]string, error) {
 	if len(data) == 0 {
 		return nil, errors.New("rpc: empty schema")
@@ -31,6 +31,40 @@ func ParseSchema(data []byte) ([]string, error) {
 	}
 
 	return nil, errors.New("rpc: unrecognized schema format (expected SMD services or OpenRPC methods)")
+}
+
+// ParseMCPTools parses MCP tools/list response and returns method names.
+// Input: {"result":{"tools":[{"name":"search_issues"},{"name":"create_issue"}]}}
+// Output: ["initialize", "tools/list", "tools/call:search_issues", "tools/call:create_issue"]
+func ParseMCPTools(data []byte) ([]string, error) {
+	var resp struct {
+		Result struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, errors.New("rpc: invalid MCP tools/list response")
+	}
+
+	if len(resp.Result.Tools) == 0 {
+		return nil, errors.New("rpc: no tools found in MCP response")
+	}
+
+	// base MCP methods that are always allowed
+	methods := []string{"initialize", "tools/list", "tools/call", "notifications/initialized"}
+
+	for _, t := range resp.Result.Tools {
+		if t.Name != "" {
+			methods = append(methods, "tools/call:"+t.Name)
+		}
+	}
+
+	sort.Strings(methods)
+
+	return methods, nil
 }
 
 // parseSMDMethods extracts method names from SMD services map.

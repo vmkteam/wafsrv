@@ -197,6 +197,193 @@ func (s *LimiterSuite) TestPerIPGlobalIgnoresDiscriminator() {
 	s.Equal(http.StatusTooManyRequests, w.Code, "global per-IP limit ignores discriminator")
 }
 
+func (s *LimiterSuite) TestURLRulePathOnly() {
+	l := s.newLimiter(Config{
+		PerIP:       Rate{Count: 1000, Duration: time.Minute},
+		Action:      "block",
+		MaxCounters: 1000,
+		URLRules: []URLRule{{
+			Name:  "search",
+			Path:  []string{"/search/all/", "/movies/catalog/"},
+			Limit: Rate{Count: 2, Duration: time.Minute},
+		}},
+	})
+
+	handler := l.Middleware()(okHandler())
+
+	for range 2 {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, s.requestWithPath(http.MethodGet, "/search/all/y-2024/"))
+		s.Equal(http.StatusOK, w.Code)
+	}
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, s.requestWithPath(http.MethodGet, "/search/all/y-2025/"))
+	s.Equal(http.StatusTooManyRequests, w.Code, "3rd matching request must hit URL rule")
+
+	// Path mismatch — same IP, no URL rule applies
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, s.requestWithPath(http.MethodGet, "/api/healthcheck"))
+	s.Equal(http.StatusOK, w.Code, "non-matching path must not be limited")
+}
+
+func (s *LimiterSuite) TestURLRulePathAndMethod() {
+	l := s.newLimiter(Config{
+		PerIP:       Rate{Count: 1000, Duration: time.Minute},
+		Action:      "block",
+		MaxCounters: 1000,
+		URLRules: []URLRule{{
+			Name:   "post-search",
+			Path:   []string{"/search/"},
+			Method: []string{"POST"},
+			Limit:  Rate{Count: 1, Duration: time.Minute},
+		}},
+	})
+
+	handler := l.Middleware()(okHandler())
+
+	// POST /search/ — matches both fields
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, s.requestWithPath(http.MethodPost, "/search/all/"))
+	s.Equal(http.StatusOK, w.Code)
+
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, s.requestWithPath(http.MethodPost, "/search/all/"))
+	s.Equal(http.StatusTooManyRequests, w.Code)
+
+	// GET /search/ — path matches but method doesn't — rule skipped
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, s.requestWithPath(http.MethodGet, "/search/all/"))
+	s.Equal(http.StatusOK, w.Code, "GET must skip POST-only rule")
+}
+
+func (s *LimiterSuite) TestURLRuleHostFilter() {
+	l := s.newLimiter(Config{
+		PerIP:       Rate{Count: 1000, Duration: time.Minute},
+		Action:      "block",
+		MaxCounters: 1000,
+		URLRules: []URLRule{{
+			Name:  "host-only",
+			Host:  []string{"api.example.com"},
+			Path:  []string{"/search/"},
+			Limit: Rate{Count: 1, Duration: time.Minute},
+		}},
+	})
+
+	handler := l.Middleware()(okHandler())
+
+	// matching host — counts
+	r := s.requestWithPath(http.MethodGet, "/search/x")
+	r.Host = "api.example.com"
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	s.Equal(http.StatusOK, w.Code)
+
+	r = s.requestWithPath(http.MethodGet, "/search/y")
+	r.Host = "api.example.com"
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	s.Equal(http.StatusTooManyRequests, w.Code)
+
+	// other.example — different host — rule skipped
+	r = s.requestWithPath(http.MethodGet, "/search/z")
+	r.Host = "other.example"
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	s.Equal(http.StatusOK, w.Code, "different host must skip rule")
+}
+
+func (s *LimiterSuite) TestURLRulePriorityFirstMatch() {
+	l := s.newLimiter(Config{
+		PerIP:       Rate{Count: 1000, Duration: time.Minute},
+		Action:      "block",
+		MaxCounters: 1000,
+		URLRules: []URLRule{
+			{Name: "tight", Path: []string{"/api/"}, Limit: Rate{Count: 1, Duration: time.Minute}},
+			{Name: "loose", Path: []string{"/api/"}, Limit: Rate{Count: 100, Duration: time.Minute}},
+		},
+	})
+
+	handler := l.Middleware()(okHandler())
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, s.requestWithPath(http.MethodGet, "/api/x"))
+	s.Equal(http.StatusOK, w.Code)
+
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, s.requestWithPath(http.MethodGet, "/api/y"))
+	s.Equal(http.StatusTooManyRequests, w.Code, "first rule wins; second never reached")
+}
+
+func (s *LimiterSuite) TestURLRuleAndRPCRuleIndependent() {
+	l := s.newLimiter(Config{
+		PerIP:       Rate{Count: 1000, Duration: time.Minute},
+		Action:      "block",
+		MaxCounters: 1000,
+		Rules: []Rule{{
+			Name:  "login",
+			Match: []string{"auth.login"},
+			Limit: Rate{Count: 5, Duration: time.Minute},
+		}},
+		URLRules: []URLRule{{
+			Name:  "rpc-path",
+			Path:  []string{"/rpc/"},
+			Limit: Rate{Count: 2, Duration: time.Minute},
+		}},
+	})
+
+	handler := l.Middleware()(okHandler())
+
+	// First two POST /rpc/ auth.login pass — within both buckets
+	for range 2 {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, s.requestWithRPC("iOS:aaa"))
+		s.Equal(http.StatusOK, w.Code)
+	}
+
+	// Third — URL rule (limit=2) blocks; RPC rule (limit=5) still has budget
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, s.requestWithRPC("iOS:aaa"))
+	s.Equal(http.StatusTooManyRequests, w.Code, "URL rule blocks even if RPC rule allows")
+}
+
+func (s *LimiterSuite) TestURLRuleSkipForWhitelisted() {
+	l := s.newLimiter(Config{
+		PerIP:       Rate{Count: 1000, Duration: time.Minute},
+		Action:      "block",
+		MaxCounters: 1000,
+		URLRules: []URLRule{{
+			Name:  "tight",
+			Path:  []string{"/"},
+			Limit: Rate{Count: 1, Duration: time.Minute},
+		}},
+	})
+
+	handler := l.Middleware()(okHandler())
+
+	for range 5 {
+		r := httptest.NewRequest(http.MethodGet, "/anything", nil)
+		rc := &waf.RequestContext{
+			ClientIP: netip.MustParseAddr("10.0.0.1"),
+			IP:       &waf.IPInfo{Whitelisted: true},
+		}
+		r = r.WithContext(waf.NewContext(r.Context(), rc))
+
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		s.Equal(http.StatusOK, w.Code, "whitelisted IP must bypass URL rules")
+	}
+}
+
+func (s *LimiterSuite) requestWithPath(method, path string) *http.Request {
+	r := httptest.NewRequest(method, path, nil)
+	rc := &waf.RequestContext{
+		ClientIP: netip.MustParseAddr("1.1.1.1"),
+	}
+
+	return r.WithContext(waf.NewContext(r.Context(), rc))
+}
+
 func (s *LimiterSuite) requestWithRPC(discriminator string) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, "/rpc/", nil)
 	rc := &waf.RequestContext{

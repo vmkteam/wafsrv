@@ -17,7 +17,7 @@ func TestParser(t *testing.T) {
 func (s *ParserSuite) TestSingleRequest() {
 	body := []byte(`{"jsonrpc":"2.0","method":"auth.login","params":{"email":"test@test.com"},"id":1}`)
 
-	call := Parse(body, "/rpc/")
+	call := Parse(body, "/rpc/", false)
 
 	s.Require().NotNil(call, "should parse valid single request")
 	s.Equal("/rpc/", call.Endpoint)
@@ -31,7 +31,7 @@ func (s *ParserSuite) TestBatchRequest() {
 		{"jsonrpc":"2.0","method":"user.get","params":{},"id":2}
 	]`)
 
-	call := Parse(body, "/rpc/")
+	call := Parse(body, "/rpc/", false)
 
 	s.Require().NotNil(call, "should parse valid batch request")
 	s.Equal([]string{"auth.login", "user.get"}, call.Methods)
@@ -39,39 +39,39 @@ func (s *ParserSuite) TestBatchRequest() {
 }
 
 func (s *ParserSuite) TestEmptyBody() {
-	call := Parse(nil, "/rpc/")
+	call := Parse(nil, "/rpc/", false)
 	s.Nil(call, "should return nil for nil body")
 
-	call = Parse([]byte{}, "/rpc/")
+	call = Parse([]byte{}, "/rpc/", false)
 	s.Nil(call, "should return nil for empty body")
 }
 
 func (s *ParserSuite) TestInvalidJSON() {
-	call := Parse([]byte(`not json`), "/rpc/")
+	call := Parse([]byte(`not json`), "/rpc/", false)
 	s.Nil(call, "should return nil for invalid JSON")
 }
 
 func (s *ParserSuite) TestNoMethod() {
-	call := Parse([]byte(`{"jsonrpc":"2.0","params":{},"id":1}`), "/rpc/")
+	call := Parse([]byte(`{"jsonrpc":"2.0","params":{},"id":1}`), "/rpc/", false)
 	s.Nil(call, "should return nil when method is empty")
 }
 
 func (s *ParserSuite) TestEmptyBatch() {
-	call := Parse([]byte(`[]`), "/rpc/")
+	call := Parse([]byte(`[]`), "/rpc/", false)
 	s.Nil(call, "should return nil for empty batch")
 }
 
 func (s *ParserSuite) TestBatchWithEmptyMethods() {
 	body := []byte(`[{"jsonrpc":"2.0","params":{},"id":1}]`)
 
-	call := Parse(body, "/rpc/")
+	call := Parse(body, "/rpc/", false)
 	s.Nil(call, "should return nil when batch has no methods")
 }
 
 func (s *ParserSuite) TestWhitespace() {
 	body := []byte(`   {"jsonrpc":"2.0","method":"test.method","id":1}`)
 
-	call := Parse(body, "/rpc/")
+	call := Parse(body, "/rpc/", false)
 
 	s.Require().NotNil(call, "should handle leading whitespace")
 	s.Equal([]string{"test.method"}, call.Methods)
@@ -80,10 +80,59 @@ func (s *ParserSuite) TestWhitespace() {
 func (s *ParserSuite) TestDifferentEndpoints() {
 	body := []byte(`{"jsonrpc":"2.0","method":"catalog.search","id":1}`)
 
-	call := Parse(body, "/rpc/catalog/")
+	call := Parse(body, "/rpc/catalog/", false)
 
 	s.Require().NotNil(call)
 	s.Equal("/rpc/catalog/", call.Endpoint, "should preserve endpoint")
+}
+
+func (s *ParserSuite) TestMCPMode_ToolsCall() {
+	body := []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search_issues","arguments":{"query":"#Unresolved"}},"id":1}`)
+
+	call := Parse(body, "mcp", true)
+
+	s.Require().NotNil(call)
+	s.Equal([]string{"tools/call:search_issues"}, call.Methods)
+}
+
+func (s *ParserSuite) TestMCPMode_ToolsCallNoName() {
+	body := []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"arguments":{"query":"test"}},"id":1}`)
+
+	call := Parse(body, "mcp", true)
+
+	s.Require().NotNil(call)
+	s.Equal([]string{"tools/call"}, call.Methods, "should keep plain method when params.name is empty")
+}
+
+func (s *ParserSuite) TestMCPMode_OtherMethod() {
+	body := []byte(`{"jsonrpc":"2.0","method":"tools/list","id":1}`)
+
+	call := Parse(body, "mcp", true)
+
+	s.Require().NotNil(call)
+	s.Equal([]string{"tools/list"}, call.Methods, "non tools/call methods should not be enriched")
+}
+
+func (s *ParserSuite) TestMCPMode_Batch() {
+	body := []byte(`[
+		{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search_issues"},"id":1},
+		{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_issue"},"id":2}
+	]`)
+
+	call := Parse(body, "mcp", true)
+
+	s.Require().NotNil(call)
+	s.Equal([]string{"tools/call:search_issues", "tools/call:get_issue"}, call.Methods)
+	s.True(call.IsBatch)
+}
+
+func (s *ParserSuite) TestMCPMode_Disabled() {
+	body := []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search_issues"},"id":1}`)
+
+	call := Parse(body, "mcp", false)
+
+	s.Require().NotNil(call)
+	s.Equal([]string{"tools/call"}, call.Methods, "should not enrich when mcpMode=false")
 }
 
 func BenchmarkParseSingle(b *testing.B) {
@@ -93,7 +142,18 @@ func BenchmarkParseSingle(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		Parse(body, "/rpc/")
+		Parse(body, "/rpc/", false)
+	}
+}
+
+func BenchmarkParseMCP(b *testing.B) {
+	body := []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search_issues","arguments":{"query":"test"}},"id":1}`)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		Parse(body, "mcp", true)
 	}
 }
 
@@ -108,6 +168,6 @@ func BenchmarkParseBatch(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		Parse(body, "/rpc/")
+		Parse(body, "/rpc/", false)
 	}
 }

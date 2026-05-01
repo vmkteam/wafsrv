@@ -118,6 +118,71 @@ MaxRequestBody = "abc"
 	s.Contains(err.Error(), "invalid size")
 }
 
+func (s *ConfigSuite) TestValidateURLRuleNoFields() {
+	path := s.writeConfig(`
+[Proxy]
+Targets = ["http://localhost:3000"]
+ServiceName = "test-svc"
+
+[[RateLimit.URLRules]]
+Name = "empty"
+Limit = "10/min"
+`)
+
+	_, err := LoadConfig(path)
+	s.Require().Error(err, "URLRule without Path/Method/Host should fail")
+	s.Contains(err.Error(), "Path/Method/Host")
+}
+
+func (s *ConfigSuite) TestValidateDuplicateRuleName() {
+	path := s.writeConfig(`
+[Proxy]
+Targets = ["http://localhost:3000"]
+ServiceName = "test-svc"
+
+[[RateLimit.Rules]]
+Name = "shared"
+Match = ["auth.login"]
+Limit = "10/min"
+
+[[RateLimit.URLRules]]
+Name = "shared"
+Path = ["/api/"]
+Limit = "10/min"
+`)
+
+	_, err := LoadConfig(path)
+	s.Require().Error(err, "duplicate rule name across Rules/URLRules should fail")
+	s.Contains(err.Error(), "duplicated")
+}
+
+func (s *ConfigSuite) TestURLRuleLimiterConfig() {
+	path := s.writeConfig(`
+[Proxy]
+Targets = ["http://localhost:3000"]
+ServiceName = "test-svc"
+
+[[RateLimit.URLRules]]
+Name = "search"
+Path = ["/search/"]
+Method = ["GET"]
+Limit = "10/min"
+Action = "block"
+`)
+
+	cfg, err := LoadConfig(path)
+	s.Require().NoError(err)
+
+	lc, err := cfg.LimiterConfig()
+	s.Require().NoError(err)
+	s.Require().Len(lc.URLRules, 1)
+	s.Equal("search", lc.URLRules[0].Name)
+	s.Equal([]string{"/search/"}, lc.URLRules[0].Path)
+	s.Equal([]string{"GET"}, lc.URLRules[0].Method)
+	s.Equal(10, lc.URLRules[0].Limit.Count)
+	s.Equal("block", lc.URLRules[0].Action)
+}
+
 func (s *ConfigSuite) TestFullConfig() {
 	path := s.writeConfig(`
 [Proxy]
