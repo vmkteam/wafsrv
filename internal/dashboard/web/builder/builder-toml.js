@@ -36,6 +36,9 @@ function builderToml() {
       if (c.proxy.platforms.length > 0) {
         lines.push(`Platforms = [${c.proxy.platforms.map(p => this._q(p)).join(', ')}]`);
       }
+      if (c.proxy.noBackendRetryAfter !== D.proxy.noBackendRetryAfter) {
+        lines.push(`NoBackendRetryAfter = ${this._q(c.proxy.noBackendRetryAfter)}`);
+      }
 
       // Timeouts
       if (c.proxy.timeouts.read !== D.proxy.timeouts.read ||
@@ -106,7 +109,7 @@ function builderToml() {
     // --- JSONRPC ---
     _genJSONRPC(c, D, lines) {
       const hasNonDefault = c.jsonrpc.endpoints.some(ep =>
-        ep.path !== '/rpc/' || ep.name !== 'main' || ep.schemaURL || ep.methodWhitelist || ep.maxBatchSize > 0
+        ep.path !== '/rpc/' || ep.name !== 'main' || ep.schemaURL || ep.methodWhitelist || ep.maxBatchSize > 0 || ep.mcpMode
       ) || c.jsonrpc.endpoints.length !== 1;
 
       if (hasNonDefault) {
@@ -121,6 +124,7 @@ function builderToml() {
           }
           if (ep.methodWhitelist) lines.push('MethodWhitelist = true');
           if (ep.maxBatchSize > 0) lines.push(`MaxBatchSize = ${ep.maxBatchSize}`);
+          if (ep.mcpMode) lines.push('MCPMode = true');
         }
       }
     },
@@ -165,6 +169,19 @@ function builderToml() {
         lines.push(`Name = ${this._q(r.name)}`);
         if (r.endpoint) lines.push(`Endpoint = ${this._q(r.endpoint)}`);
         if (r.match.length > 0) lines.push(`Match = [${r.match.map(m => this._q(m)).join(', ')}]`);
+        lines.push(`Limit = ${this._q(r.limit)}`);
+        if (r.action) lines.push(`Action = ${this._q(r.action)}`);
+      }
+
+      const urlRules = c.rateLimit.urlRules || [];
+      for (const r of urlRules) {
+        if (!r.name) continue;
+        lines.push('');
+        lines.push('[[RateLimit.URLRules]]');
+        lines.push(`Name = ${this._q(r.name)}`);
+        if (r.path && r.path.length > 0) lines.push(`Path = [${r.path.map(s => this._q(s)).join(', ')}]`);
+        if (r.method && r.method.length > 0) lines.push(`Method = [${r.method.map(s => this._q(s)).join(', ')}]`);
+        if (r.host && r.host.length > 0) lines.push(`Host = [${r.host.map(s => this._q(s)).join(', ')}]`);
         lines.push(`Limit = ${this._q(r.limit)}`);
         if (r.action) lines.push(`Action = ${this._q(r.action)}`);
       }

@@ -585,6 +585,10 @@ func (ConfigService) SMD() smd.ServiceInfo {
 									},
 								},
 								{
+									Name: "noBackendRetryAfter",
+									Type: smd.String,
+								},
+								{
 									Name: "readTimeout",
 									Type: smd.String,
 								},
@@ -715,6 +719,10 @@ func (ConfigService) SMD() smd.ServiceInfo {
 									Name: "maxBatchSize",
 									Type: smd.Integer,
 								},
+								{
+									Name: "mcpMode",
+									Type: smd.Boolean,
+								},
 							},
 						},
 						"WAFSection": {
@@ -760,6 +768,13 @@ func (ConfigService) SMD() smd.ServiceInfo {
 										"$ref": "#/definitions/RuleInfo",
 									},
 								},
+								{
+									Name: "urlRules",
+									Type: smd.Array,
+									Items: map[string]string{
+										"$ref": "#/definitions/URLRuleInfo",
+									},
+								},
 							},
 						},
 						"RuleInfo": {
@@ -775,6 +790,44 @@ func (ConfigService) SMD() smd.ServiceInfo {
 								},
 								{
 									Name: "match",
+									Type: smd.Array,
+									Items: map[string]string{
+										"type": smd.String,
+									},
+								},
+								{
+									Name: "limit",
+									Type: smd.String,
+								},
+								{
+									Name: "action",
+									Type: smd.String,
+								},
+							},
+						},
+						"URLRuleInfo": {
+							Type: "object",
+							Properties: smd.PropertyList{
+								{
+									Name: "name",
+									Type: smd.String,
+								},
+								{
+									Name: "path",
+									Type: smd.Array,
+									Items: map[string]string{
+										"type": smd.String,
+									},
+								},
+								{
+									Name: "method",
+									Type: smd.Array,
+									Items: map[string]string{
+										"type": smd.String,
+									},
+								},
+								{
+									Name: "host",
 									Type: smd.Array,
 									Items: map[string]string{
 										"type": smd.String,

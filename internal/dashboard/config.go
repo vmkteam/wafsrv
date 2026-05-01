@@ -42,21 +42,22 @@ type ConfigResponse struct {
 }
 
 type ProxySection struct {
-	Listen         string   `json:"listen"`
-	Targets        []string `json:"targets"`
-	ServiceName    string   `json:"serviceName"`
-	Platforms      []string `json:"platforms,omitempty"`
-	ReadTimeout    string   `json:"readTimeout"`
-	WriteTimeout   string   `json:"writeTimeout"`
-	IdleTimeout    string   `json:"idleTimeout"`
-	MaxRequestBody string   `json:"maxRequestBody"`
-	RealIPHeaders  []string `json:"realIpHeaders"`
-	TrustedProxies []string `json:"trustedProxies"`
-	CBEnabled      bool     `json:"cbEnabled"`
-	CBThreshold    int      `json:"cbThreshold"`
-	CBTimeout      string   `json:"cbTimeout"`
-	StaticPaths    []string `json:"staticPaths,omitempty"`
-	StaticExts     []string `json:"staticExts,omitempty"`
+	Listen              string   `json:"listen"`
+	Targets             []string `json:"targets"`
+	ServiceName         string   `json:"serviceName"`
+	Platforms           []string `json:"platforms,omitempty"`
+	NoBackendRetryAfter string   `json:"noBackendRetryAfter"`
+	ReadTimeout         string   `json:"readTimeout"`
+	WriteTimeout        string   `json:"writeTimeout"`
+	IdleTimeout         string   `json:"idleTimeout"`
+	MaxRequestBody      string   `json:"maxRequestBody"`
+	RealIPHeaders       []string `json:"realIpHeaders"`
+	TrustedProxies      []string `json:"trustedProxies"`
+	CBEnabled           bool     `json:"cbEnabled"`
+	CBThreshold         int      `json:"cbThreshold"`
+	CBTimeout           string   `json:"cbTimeout"`
+	StaticPaths         []string `json:"staticPaths,omitempty"`
+	StaticExts          []string `json:"staticExts,omitempty"`
 
 	// target discovery (DNS SRV)
 	TargetDiscoveryEnabled bool   `json:"targetDiscoveryEnabled"`
@@ -82,6 +83,7 @@ type JSONRPCEndpointInfo struct {
 	SchemaRefresh   string `json:"schemaRefresh,omitempty"`
 	MethodWhitelist bool   `json:"methodWhitelist"`
 	MaxBatchSize    int    `json:"maxBatchSize"`
+	MCPMode         bool   `json:"mcpMode"`
 }
 
 type WAFSection struct {
@@ -91,11 +93,22 @@ type WAFSection struct {
 }
 
 type RateLimitSection struct {
-	Enabled     bool       `json:"enabled"`
-	PerIP       string     `json:"perIp"`
-	Action      string     `json:"action"`
-	MaxCounters int        `json:"maxCounters"`
-	Rules       []RuleInfo `json:"rules"`
+	Enabled     bool          `json:"enabled"`
+	PerIP       string        `json:"perIp"`
+	Action      string        `json:"action"`
+	MaxCounters int           `json:"maxCounters"`
+	Rules       []RuleInfo    `json:"rules"`
+	URLRules    []URLRuleInfo `json:"urlRules"`
+}
+
+// URLRuleInfo describes a per-URL rate limit rule.
+type URLRuleInfo struct {
+	Name   string   `json:"name"`
+	Path   []string `json:"path,omitempty"`
+	Method []string `json:"method,omitempty"`
+	Host   []string `json:"host,omitempty"`
+	Limit  string   `json:"limit"`
+	Action string   `json:"action,omitempty"`
 }
 
 type IPSection struct {

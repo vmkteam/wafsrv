@@ -617,6 +617,8 @@
       <div class="cfg-kv"><span>Real IP</span><span x-text="(cfgData.proxy.realIpHeaders||[]).join(', ')"></span></div>
       <div class="cfg-kv"><span>Trusted Proxies</span><span x-text="(cfgData.proxy.trustedProxies||[]).join(', ')"></span></div>
       <div class="cfg-kv"><span>Circuit Breaker</span><span x-text="(cfgData.proxy.cbEnabled ? 'on' : 'off') + '  threshold=' + cfgData.proxy.cbThreshold + '  timeout=' + cfgData.proxy.cbTimeout"></span></div>
+      <div class="cfg-kv" x-show="cfgData.proxy.noBackendRetryAfter"><span>No-Backend Retry-After</span><span x-text="cfgData.proxy.noBackendRetryAfter"></span></div>
+      <div class="cfg-kv"><span>Error Codes</span><span>cb_open=503+RA · upstream_error=502 · no_backends=503+RA · panic=500</span></div>
       <div class="cfg-kv" x-show="(cfgData.proxy.staticPaths||[]).length || (cfgData.proxy.staticExts||[]).length"><span>Static Bypass</span><span x-text="((cfgData.proxy.staticPaths||[]).join(', ') + '  (' + (cfgData.proxy.staticExts||[]).join(', ') + ')')"></span></div>
     </div>
   </details>
@@ -725,13 +727,13 @@
   </details>
 
   <details class="cfg-section">
-    <summary><span class="cfg-title">JSONRPC</span> <span class="cfg-summary" x-text="cfgData.jsonrpc.endpoints.length + ' endpoints' + (cfgData.jsonrpc.endpoints.some(e => e.methodWhitelist) ? '  whitelist=on' : '')"></span></summary>
+    <summary><span class="cfg-title">JSONRPC</span> <span class="cfg-summary" x-text="cfgData.jsonrpc.endpoints.length + ' endpoints' + (cfgData.jsonrpc.endpoints.some(e => e.methodWhitelist) ? '  whitelist=on' : '') + (cfgData.jsonrpc.endpoints.some(e => e.mcpMode) ? '  MCP=on' : '')"></span></summary>
     <div class="cfg-body">
       <table>
-        <thead><tr><th>Path</th><th>Name</th><th>Schema</th><th>Refresh</th><th>Whitelist</th><th>MaxBatch</th></tr></thead>
+        <thead><tr><th>Path</th><th>Name</th><th>Schema</th><th>Refresh</th><th>Whitelist</th><th>MaxBatch</th><th>MCP</th></tr></thead>
         <tbody>
           <template x-for="ep in cfgData.jsonrpc.endpoints" :key="ep.name">
-            <tr><td><code x-text="ep.path"></code></td><td x-text="ep.name"></td><td x-text="ep.schemaUrl || '—'"></td><td x-text="ep.schemaRefresh || '—'"></td><td x-text="ep.methodWhitelist ? '✓' : '✗'"></td><td x-text="ep.maxBatchSize || '∞'"></td></tr>
+            <tr><td><code x-text="ep.path"></code></td><td x-text="ep.name"></td><td x-text="ep.schemaUrl || '—'"></td><td x-text="ep.schemaRefresh || '—'"></td><td x-text="ep.methodWhitelist ? '✓' : '✗'"></td><td x-text="ep.maxBatchSize || '∞'"></td><td x-text="ep.mcpMode ? '✓' : '✗'"></td></tr>
           </template>
         </tbody>
       </table>

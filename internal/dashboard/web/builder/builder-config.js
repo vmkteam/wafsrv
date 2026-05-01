@@ -10,6 +10,7 @@ function builderConfig() {
           targets: ['http://localhost:3000'],
           serviceName: '',
           platforms: [],
+          noBackendRetryAfter: '5s',
           timeouts: {read: '30s', write: '30s', idle: '120s'},
           limits: {maxRequestBody: '1MB'},
           realIP: {
@@ -27,7 +28,7 @@ function builderConfig() {
         waf: {enabled: false, mode: 'detection', paranoiaLevel: 1},
         rateLimit: {
           enabled: false, perIP: '100/min', action: 'block', maxCounters: 100000,
-          rules: [],
+          rules: [], urlRules: [],
         },
         ip: {
           geoDatabase: '', asnDatabase: '',
@@ -70,11 +71,15 @@ function builderConfig() {
     },
 
     defaultEndpoint() {
-      return {path: '/rpc/', name: 'main', schemaURL: '', schemaRefresh: '5m', methodWhitelist: false, maxBatchSize: 0};
+      return {path: '/rpc/', name: 'main', schemaURL: '', schemaRefresh: '5m', methodWhitelist: false, maxBatchSize: 0, mcpMode: false};
     },
 
     defaultRateLimitRule() {
       return {name: '', endpoint: '', match: [], limit: '10/min', action: ''};
+    },
+
+    defaultRateLimitURLRule() {
+      return {name: '', path: [], method: [], host: [], limit: '10/min', action: ''};
     },
 
     defaultSigningMethod() {
@@ -280,6 +285,10 @@ function builderConfig() {
         if (p.rateLimit.perIP) base.rateLimit.perIP = p.rateLimit.perIP;
         if (p.rateLimit.action) base.rateLimit.action = p.rateLimit.action;
         if (p.rateLimit.rules) base.rateLimit.rules = p.rateLimit.rules.map(r => ({...this.defaultRateLimitRule(), ...r, match: [...(r.match || [])]}));
+        if (p.rateLimit.urlRules) base.rateLimit.urlRules = p.rateLimit.urlRules.map(r => ({
+          ...this.defaultRateLimitURLRule(), ...r,
+          path: [...(r.path || [])], method: [...(r.method || [])], host: [...(r.host || [])],
+        }));
       }
 
       // IP

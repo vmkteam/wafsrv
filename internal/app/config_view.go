@@ -25,21 +25,22 @@ func buildProxySection(c Config) dashboard.ProxySection {
 	td := c.Proxy.TargetDiscovery
 
 	return dashboard.ProxySection{
-		Listen:         c.Proxy.Listen,
-		Targets:        c.Proxy.Targets,
-		ServiceName:    c.Proxy.ServiceName,
-		Platforms:      c.Proxy.Platforms,
-		ReadTimeout:    c.Proxy.Timeouts.Read,
-		WriteTimeout:   c.Proxy.Timeouts.Write,
-		IdleTimeout:    c.Proxy.Timeouts.Idle,
-		MaxRequestBody: c.Proxy.Limits.MaxRequestBody,
-		RealIPHeaders:  c.Proxy.RealIP.Headers,
-		TrustedProxies: c.Proxy.RealIP.TrustedProxies,
-		CBEnabled:      c.Proxy.CircuitBreaker.Enabled == nil || *c.Proxy.CircuitBreaker.Enabled,
-		CBThreshold:    c.Proxy.CircuitBreaker.Threshold,
-		CBTimeout:      c.Proxy.CircuitBreaker.Timeout,
-		StaticPaths:    c.Proxy.Static.Paths,
-		StaticExts:     c.Proxy.Static.Extensions,
+		Listen:              c.Proxy.Listen,
+		Targets:             c.Proxy.Targets,
+		ServiceName:         c.Proxy.ServiceName,
+		Platforms:           c.Proxy.Platforms,
+		NoBackendRetryAfter: c.Proxy.NoBackendRetryAfter,
+		ReadTimeout:         c.Proxy.Timeouts.Read,
+		WriteTimeout:        c.Proxy.Timeouts.Write,
+		IdleTimeout:         c.Proxy.Timeouts.Idle,
+		MaxRequestBody:      c.Proxy.Limits.MaxRequestBody,
+		RealIPHeaders:       c.Proxy.RealIP.Headers,
+		TrustedProxies:      c.Proxy.RealIP.TrustedProxies,
+		CBEnabled:           c.Proxy.CircuitBreaker.Enabled == nil || *c.Proxy.CircuitBreaker.Enabled,
+		CBThreshold:         c.Proxy.CircuitBreaker.Threshold,
+		CBTimeout:           c.Proxy.CircuitBreaker.Timeout,
+		StaticPaths:         c.Proxy.Static.Paths,
+		StaticExts:          c.Proxy.Static.Extensions,
 
 		TargetDiscoveryEnabled: td.TargetDiscoveryEnabled(),
 		TargetDiscoveryHost:    td.Hostname,
@@ -56,7 +57,7 @@ func buildJSONRPCSection(c Config) dashboard.JSONRPCSection {
 		eps[i] = dashboard.JSONRPCEndpointInfo{
 			Path: ep.Path, Name: ep.Name,
 			SchemaURL: ep.SchemaURL, SchemaRefresh: ep.SchemaRefresh,
-			MethodWhitelist: ep.MethodWhitelist, MaxBatchSize: ep.MaxBatchSize,
+			MethodWhitelist: ep.MethodWhitelist, MaxBatchSize: ep.MaxBatchSize, MCPMode: ep.MCPMode,
 		}
 	}
 
@@ -72,9 +73,22 @@ func buildRateLimitSection(c Config) dashboard.RateLimitSection {
 		}
 	}
 
+	urlRules := make([]dashboard.URLRuleInfo, len(c.RateLimit.URLRules))
+	for i, r := range c.RateLimit.URLRules {
+		urlRules[i] = dashboard.URLRuleInfo{
+			Name:   r.Name,
+			Path:   r.Path,
+			Method: r.Method,
+			Host:   r.Host,
+			Limit:  r.Limit,
+			Action: r.Action,
+		}
+	}
+
 	return dashboard.RateLimitSection{
 		Enabled: c.RateLimit.RateLimitEnabled(), PerIP: c.RateLimit.PerIP,
-		Action: c.RateLimit.Action, MaxCounters: c.RateLimit.MaxCounters, Rules: rules,
+		Action: c.RateLimit.Action, MaxCounters: c.RateLimit.MaxCounters,
+		Rules: rules, URLRules: urlRules,
 	}
 }
 
