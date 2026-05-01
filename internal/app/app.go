@@ -82,6 +82,9 @@ func New(appName string, sl embedlog.Logger, cfg Config) (*App, error) {
 		return nil, fmt.Errorf("app: %w", err)
 	}
 
+	metrics := newMetrics()
+	pcfg.ErrorRecorder = metrics.proxyErrorRecorder()
+
 	p, err := proxy.New(pcfg, resolver)
 	if err != nil {
 		// non-fatal for discovery mode: proxy starts with empty pool
@@ -94,6 +97,7 @@ func New(appName string, sl embedlog.Logger, cfg Config) (*App, error) {
 		cfg:      cfg,
 		proxyCfg: pcfg,
 		proxy:    p,
+		metrics:  metrics,
 	}
 
 	if err := a.initStorage(); err != nil {
@@ -105,7 +109,6 @@ func New(appName string, sl embedlog.Logger, cfg Config) (*App, error) {
 		event.NewSeries(5*time.Second, 360), // 30 min history
 		event.NewTops(30*time.Minute, 10000),
 	)
-	a.metrics = newMetrics()
 
 	if err := a.initWAF(); err != nil {
 		return nil, err
@@ -266,7 +269,7 @@ func (a *App) initRPCInspector() {
 	target := a.proxy.FirstBackendURL()
 
 	for _, ep := range a.cfg.JSONRPC.Endpoints {
-		if ep.SchemaURL == "" && ep.MaxBatchSize == 0 {
+		if ep.SchemaURL == "" && ep.MaxBatchSize == 0 && !ep.MCPMode {
 			continue
 		}
 
@@ -282,6 +285,7 @@ func (a *App) initRPCInspector() {
 			discoveries[ep.Name] = rpc.NewDiscovery(rpc.DiscoveryConfig{
 				SchemaURL: url,
 				Refresh:   refresh,
+				MCPMode:   ep.MCPMode,
 			}, logger)
 		}
 	}

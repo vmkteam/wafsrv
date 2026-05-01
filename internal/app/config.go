@@ -206,10 +206,11 @@ func (c *WAFConfig) WAFEnabled() bool {
 // RateLimitConfig configures rate limiting.
 type RateLimitConfig struct {
 	Enabled     *bool
-	PerIP       string // "100/min"
-	Action      string // "block" | "throttle"
-	MaxCounters int    // LRU eviction
-	Rules       []RateLimitRule
+	PerIP       string             // "100/min"
+	Action      string             // "block" | "throttle"
+	MaxCounters int                // LRU eviction
+	Rules       []RateLimitRule    // RPC method matching
+	URLRules    []URLRateLimitRule // HTTP path/method/host matching
 }
 
 // RateLimitEnabled returns whether rate limiting is enabled (default false).
@@ -221,13 +222,24 @@ func (c *RateLimitConfig) RateLimitEnabled() bool {
 	return false
 }
 
-// RateLimitRule defines a per-method rate limit.
+// RateLimitRule defines a per-method rate limit (JSON-RPC matching).
 type RateLimitRule struct {
 	Name     string
 	Endpoint string   // JSONRPC.Endpoints[].Name, "" = all
 	Match    []string // method names
 	Limit    string   // "10/min"
 	Action   string   // "block" | "throttle"
+}
+
+// URLRateLimitRule defines a per-URL rate limit (HTTP path/method/host matching).
+// AND-semantics across non-empty fields.
+type URLRateLimitRule struct {
+	Name   string
+	Path   []string // URL path prefix list
+	Method []string // HTTP method list, e.g. ["GET","POST"]
+	Host   []string // HTTP Host header list (optional, for multi-host wafsrv)
+	Limit  string   // "10/min"
+	Action string   // "block" | "throttle"
 }
 
 // IPConfig configures IP intelligence.
@@ -338,24 +350,26 @@ type JSONRPCConfig struct {
 type JSONRPCEndpoint struct {
 	Path            string
 	Name            string
-	SchemaURL       string // URL to fetch schema (SMD/OpenRPC). Relative = Proxy.Targets[0] + path
+	SchemaURL       string // URL to fetch schema (SMD/OpenRPC/MCP). Relative = Proxy.Targets[0] + path
 	SchemaRefresh   string // refresh interval, default "5m"
 	MethodWhitelist bool   // block unknown methods
 	MaxBatchSize    int    // max batch size, 0 = no limit
+	MCPMode         bool   // MCP: extract params.name for tools/call → "tools/call:tool_name"
 }
 
 // ProxyConfig configures the reverse proxy.
 type ProxyConfig struct {
-	Listen          string
-	Targets         []string
-	ServiceName     string
-	Platforms       []string // known platform names for metrics normalization
-	Timeouts        TimeoutsConfig
-	Limits          LimitsConfig
-	RealIP          RealIPConfig
-	CircuitBreaker  CBConfig
-	Static          StaticConfig
-	TargetDiscovery TargetDiscoveryConfig
+	Listen              string
+	Targets             []string
+	ServiceName         string
+	Platforms           []string // known platform names for metrics normalization
+	NoBackendRetryAfter string   // Retry-After header for empty pool 503, default "5s"
+	Timeouts            TimeoutsConfig
+	Limits              LimitsConfig
+	RealIP              RealIPConfig
+	CircuitBreaker      CBConfig
+	Static              StaticConfig
+	TargetDiscovery     TargetDiscoveryConfig
 }
 
 // TargetDiscoveryConfig configures dynamic backend discovery via DNS SRV.
@@ -478,6 +492,7 @@ func (c *Config) Validate() error {
 		{c.Proxy.Timeouts.Write, "Proxy.Timeouts.Write"},
 		{c.Proxy.Timeouts.Idle, "Proxy.Timeouts.Idle"},
 		{c.Proxy.CircuitBreaker.Timeout, "Proxy.CircuitBreaker.Timeout"},
+		{c.Proxy.NoBackendRetryAfter, "Proxy.NoBackendRetryAfter"},
 		{c.IP.Whitelist.BotVerify.CacheTTL, "IP.Whitelist.BotVerify.CacheTTL"},
 		{c.IP.Whitelist.BotVerify.DNSTimeout, "IP.Whitelist.BotVerify.DNSTimeout"},
 		{c.IP.Whitelist.BotVerify.RangesRefresh, "IP.Whitelist.BotVerify.RangesRefresh"},
@@ -502,6 +517,44 @@ func (c *Config) Validate() error {
 
 	if err := c.IP.Reputation.validate(); err != nil {
 		return err
+	}
+
+	if err := c.RateLimit.validate(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *RateLimitConfig) validate() error {
+	seen := make(map[string]struct{}, len(c.Rules)+len(c.URLRules))
+
+	for i, r := range c.Rules {
+		if r.Name == "" {
+			return fmt.Errorf("config: RateLimit.Rules[%d]: Name is required", i)
+		}
+
+		if _, dup := seen[r.Name]; dup {
+			return fmt.Errorf("config: RateLimit rule name %q is duplicated", r.Name)
+		}
+
+		seen[r.Name] = struct{}{}
+	}
+
+	for i, r := range c.URLRules {
+		if r.Name == "" {
+			return fmt.Errorf("config: RateLimit.URLRules[%d]: Name is required", i)
+		}
+
+		if _, dup := seen[r.Name]; dup {
+			return fmt.Errorf("config: RateLimit rule name %q is duplicated between Rules and URLRules", r.Name)
+		}
+
+		seen[r.Name] = struct{}{}
+
+		if len(r.Path) == 0 && len(r.Method) == 0 && len(r.Host) == 0 {
+			return fmt.Errorf("config: RateLimit.URLRules[%d] %q: at least one of Path/Method/Host is required", i, r.Name)
+		}
 	}
 
 	return nil
@@ -556,18 +609,19 @@ func (c *Config) ProxyConfig() (proxy.Config, error) {
 	}
 
 	return proxy.Config{
-		Scheme:          scheme,
-		ReadTimeout:     parseDuration(c.Proxy.Timeouts.Read, 30*time.Second),
-		WriteTimeout:    parseDuration(c.Proxy.Timeouts.Write, 30*time.Second),
-		IdleTimeout:     parseDuration(c.Proxy.Timeouts.Idle, 120*time.Second),
-		MaxRequestBody:  parseSize(c.Proxy.Limits.MaxRequestBody, 1<<20),
-		CBEnabled:       c.Proxy.CircuitBreaker.cbEnabled(),
-		CBThreshold:     uint32(c.Proxy.CircuitBreaker.Threshold),
-		CBTimeout:       parseDuration(c.Proxy.CircuitBreaker.Timeout, 30*time.Second),
-		TrustedProxies:  c.Proxy.RealIP.TrustedProxies,
-		RealIPHeaders:   c.Proxy.RealIP.Headers,
-		RefreshInterval: parseDuration(td.RefreshInterval, 0),
-		ResolveTimeout:  parseDuration(td.ResolveTimeout, 3*time.Second),
+		Scheme:              scheme,
+		ReadTimeout:         parseDuration(c.Proxy.Timeouts.Read, 30*time.Second),
+		WriteTimeout:        parseDuration(c.Proxy.Timeouts.Write, 30*time.Second),
+		IdleTimeout:         parseDuration(c.Proxy.Timeouts.Idle, 120*time.Second),
+		MaxRequestBody:      parseSize(c.Proxy.Limits.MaxRequestBody, 1<<20),
+		CBEnabled:           c.Proxy.CircuitBreaker.cbEnabled(),
+		CBThreshold:         uint32(c.Proxy.CircuitBreaker.Threshold),
+		CBTimeout:           parseDuration(c.Proxy.CircuitBreaker.Timeout, 30*time.Second),
+		NoBackendRetryAfter: parseDuration(c.Proxy.NoBackendRetryAfter, 5*time.Second),
+		TrustedProxies:      c.Proxy.RealIP.TrustedProxies,
+		RealIPHeaders:       c.Proxy.RealIP.Headers,
+		RefreshInterval:     parseDuration(td.RefreshInterval, 0),
+		ResolveTimeout:      parseDuration(td.ResolveTimeout, 3*time.Second),
 	}, nil
 }
 
@@ -677,11 +731,34 @@ func (c *Config) LimiterConfig() (limit.Config, error) {
 		})
 	}
 
+	urlRules := make([]limit.URLRule, 0, len(c.RateLimit.URLRules))
+	for _, r := range c.RateLimit.URLRules {
+		rt, err := limit.ParseRate(r.Limit)
+		if err != nil {
+			return limit.Config{}, fmt.Errorf("config: url rule %q: %w", r.Name, err)
+		}
+
+		action := r.Action
+		if action == "" {
+			action = c.RateLimit.Action
+		}
+
+		urlRules = append(urlRules, limit.URLRule{
+			Name:   r.Name,
+			Path:   r.Path,
+			Method: r.Method,
+			Host:   r.Host,
+			Limit:  rt,
+			Action: action,
+		})
+	}
+
 	return limit.Config{
 		PerIP:       perIP,
 		Action:      c.RateLimit.Action,
 		MaxCounters: c.RateLimit.MaxCounters,
 		Rules:       rules,
+		URLRules:    urlRules,
 	}, nil
 }
 
@@ -880,6 +957,10 @@ func applyProxyDefaults(c *Config) {
 
 	if c.Proxy.CircuitBreaker.Timeout == "" {
 		c.Proxy.CircuitBreaker.Timeout = defaultTimeout
+	}
+
+	if c.Proxy.NoBackendRetryAfter == "" {
+		c.Proxy.NoBackendRetryAfter = "5s"
 	}
 
 	if c.Proxy.TargetDiscovery.TargetDiscoveryEnabled() {

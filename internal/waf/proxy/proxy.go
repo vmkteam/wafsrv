@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -15,20 +16,29 @@ import (
 	"github.com/sony/gobreaker/v2"
 )
 
+// Proxy error reasons for wafsrv_proxy_errors_total metric.
+const (
+	ErrorReasonCBOpen        = "cb_open"
+	ErrorReasonUpstreamError = "upstream_error"
+	ErrorReasonNoBackends    = "no_backends"
+)
+
 var errBackend5xx = errors.New("proxy: backend returned 5xx")
 
 // Config holds proxy configuration.
 type Config struct {
-	Scheme         string // URL scheme for backends (default "http")
-	ReadTimeout    time.Duration
-	WriteTimeout   time.Duration // used by http.Server in app
-	IdleTimeout    time.Duration // used by http.Server in app
-	MaxRequestBody int64         // used by bodyLimit middleware in app
-	CBEnabled      bool
-	CBThreshold    uint32
-	CBTimeout      time.Duration
-	TrustedProxies []string // used by realIP middleware in app
-	RealIPHeaders  []string // used by realIP middleware in app
+	Scheme              string // URL scheme for backends (default "http")
+	ReadTimeout         time.Duration
+	WriteTimeout        time.Duration // used by http.Server in app
+	IdleTimeout         time.Duration // used by http.Server in app
+	MaxRequestBody      int64         // used by bodyLimit middleware in app
+	CBEnabled           bool
+	CBThreshold         uint32
+	CBTimeout           time.Duration
+	NoBackendRetryAfter time.Duration // Retry-After header for empty-pool 503; 0 disables
+	TrustedProxies      []string      // used by realIP middleware in app
+	RealIPHeaders       []string      // used by realIP middleware in app
+	ErrorRecorder       ErrorRecorder // optional, see ErrorRecorder docs
 
 	// Discovery refresh settings. Zero values = no refresh (static mode).
 	RefreshInterval time.Duration
@@ -84,11 +94,20 @@ type Proxy struct {
 	cbEnabled   bool
 	cbThreshold uint32
 	cbTimeout   time.Duration
+
+	noBackendRetryAfter time.Duration
+	errRecorder         ErrorRecorder
 }
 
 // LatencyRecorder records per-target latency.
 type LatencyRecorder interface {
 	RecordTargetLatency(target string, d time.Duration)
+}
+
+// ErrorRecorder records proxy errors by target and reason
+// (cb_open / upstream_error / no_backends).
+type ErrorRecorder interface {
+	RecordProxyError(target, reason string)
 }
 
 // New creates a new Proxy. Resolver determines the source of backends:
@@ -104,14 +123,16 @@ func New(cfg Config, resolver Resolver) (*Proxy, error) {
 	}
 
 	p := &Proxy{
-		transport:      newTransport(cfg.ReadTimeout),
-		scheme:         scheme,
-		resolver:       resolver,
-		refresh:        cfg.RefreshInterval,
-		resolveTimeout: cfg.ResolveTimeout,
-		cbEnabled:      cfg.CBEnabled,
-		cbThreshold:    cfg.CBThreshold,
-		cbTimeout:      cfg.CBTimeout,
+		transport:           newTransport(cfg.ReadTimeout),
+		scheme:              scheme,
+		resolver:            resolver,
+		refresh:             cfg.RefreshInterval,
+		resolveTimeout:      cfg.ResolveTimeout,
+		cbEnabled:           cfg.CBEnabled,
+		cbThreshold:         cfg.CBThreshold,
+		cbTimeout:           cfg.CBTimeout,
+		noBackendRetryAfter: cfg.NoBackendRetryAfter,
+		errRecorder:         cfg.ErrorRecorder,
 	}
 
 	// initial resolve
@@ -173,7 +194,16 @@ func (p *Proxy) HandlerWithLatency(lr LatencyRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pl := p.pool.Load()
 		if pl == nil || len(pl.backends) == 0 {
+			if p.noBackendRetryAfter > 0 {
+				w.Header().Set("Retry-After", strconv.Itoa(int(p.noBackendRetryAfter.Seconds())))
+			}
+
+			if p.errRecorder != nil {
+				p.errRecorder.RecordProxyError("", ErrorReasonNoBackends)
+			}
+
 			http.Error(w, "no backends available", http.StatusServiceUnavailable)
+
 			return
 		}
 
@@ -303,10 +333,37 @@ func (p *Proxy) newBackend(t Target) *backend {
 				req.Header.Set("User-Agent", "")
 			}
 		},
-		Transport: wrappedTransport(p.transport, b.cb),
+		Transport:    wrappedTransport(p.transport, b.cb),
+		ErrorHandler: p.errorHandler(b),
 	}
 
 	return b
+}
+
+// errorHandler differentiates circuit-breaker errors (503 + Retry-After)
+// from real upstream errors (502). Falls back to 502 for unknown errors.
+func (p *Proxy) errorHandler(b *backend) func(http.ResponseWriter, *http.Request, error) {
+	return func(w http.ResponseWriter, _ *http.Request, err error) {
+		switch {
+		case errors.Is(err, gobreaker.ErrOpenState),
+			errors.Is(err, gobreaker.ErrTooManyRequests):
+			if p.cbTimeout > 0 {
+				w.Header().Set("Retry-After", strconv.Itoa(int(p.cbTimeout.Seconds())))
+			}
+
+			if p.errRecorder != nil {
+				p.errRecorder.RecordProxyError(b.name, ErrorReasonCBOpen)
+			}
+
+			http.Error(w, "Backend circuit open", http.StatusServiceUnavailable)
+		default:
+			if p.errRecorder != nil {
+				p.errRecorder.RecordProxyError(b.name, ErrorReasonUpstreamError)
+			}
+
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		}
+	}
 }
 
 func wrappedTransport(transport http.RoundTripper, cb *gobreaker.CircuitBreaker[*http.Response]) http.RoundTripper {

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -125,14 +126,132 @@ func (s *ProxySuite) TestCircuitBreaker() {
 	ts := httptest.NewServer(p.Handler())
 	defer ts.Close()
 
-	// trigger circuit breaker: 3 consecutive failures
+	// trigger circuit breaker: 3 consecutive failures, then keep hitting
+	var lastStatus int
+	var lastRetryAfter string
+
 	for range 5 {
 		resp, err := http.Get(ts.URL + "/")
 		s.Require().NoError(err)
+		lastStatus = resp.StatusCode
+		lastRetryAfter = resp.Header.Get("Retry-After")
 		resp.Body.Close()
 	}
 
 	s.LessOrEqual(callCount, 4, "circuit breaker should stop forwarding after threshold")
+	s.Equal(http.StatusServiceUnavailable, lastStatus, "CB open should produce 503")
+	s.NotEmpty(lastRetryAfter, "CB open should set Retry-After header")
+	s.Equal("1", lastRetryAfter, "Retry-After should equal cbTimeout in seconds")
+}
+
+func (s *ProxySuite) TestUpstreamErrorReturns502() {
+	// no backend listening — connect refused
+	u, _ := url.Parse("http://127.0.0.1:1") // port 1 should refuse
+	p, err := New(Config{
+		ReadTimeout: 1 * time.Second,
+		CBEnabled:   false,
+	}, Static([]*url.URL{u}))
+	s.Require().NoError(err)
+
+	ts := httptest.NewServer(p.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/")
+	s.Require().NoError(err)
+	defer resp.Body.Close()
+
+	s.Equal(http.StatusBadGateway, resp.StatusCode, "real upstream error should return 502")
+	s.Empty(resp.Header.Get("Retry-After"), "upstream error should not set Retry-After")
+}
+
+func (s *ProxySuite) TestEmptyPoolRetryAfter() {
+	failResolver := &failingResolver{}
+	p, err := New(Config{
+		ReadTimeout:         5 * time.Second,
+		NoBackendRetryAfter: 7 * time.Second,
+	}, failResolver)
+	s.Require().Error(err)
+	s.Require().NotNil(p)
+
+	ts := httptest.NewServer(p.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/")
+	s.Require().NoError(err)
+	defer resp.Body.Close()
+
+	s.Equal(http.StatusServiceUnavailable, resp.StatusCode)
+	s.Equal("7", resp.Header.Get("Retry-After"), "empty pool should expose NoBackendRetryAfter")
+}
+
+func (s *ProxySuite) TestErrorRecorder() {
+	rec := &fakeErrorRecorder{}
+
+	// CB open path
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer backend.Close()
+
+	u, _ := url.Parse(backend.URL)
+	p, err := New(Config{
+		ReadTimeout:   5 * time.Second,
+		CBEnabled:     true,
+		CBThreshold:   2,
+		CBTimeout:     1 * time.Second,
+		ErrorRecorder: rec,
+	}, Static([]*url.URL{u}))
+	s.Require().NoError(err)
+
+	ts := httptest.NewServer(p.Handler())
+	defer ts.Close()
+
+	for range 5 {
+		resp, errGet := http.Get(ts.URL + "/")
+		s.Require().NoError(errGet)
+		resp.Body.Close()
+	}
+
+	s.Positive(rec.count(ErrorReasonCBOpen), "should record cb_open events")
+
+	// empty pool path
+	pNoBackend, _ := New(Config{
+		ReadTimeout:         5 * time.Second,
+		NoBackendRetryAfter: time.Second,
+		ErrorRecorder:       rec,
+	}, &failingResolver{})
+
+	ts2 := httptest.NewServer(pNoBackend.Handler())
+	defer ts2.Close()
+
+	resp, errGet := http.Get(ts2.URL + "/")
+	s.Require().NoError(errGet)
+	resp.Body.Close()
+
+	s.Equal(1, rec.count(ErrorReasonNoBackends), "should record no_backends event")
+}
+
+type fakeErrorRecorder struct {
+	mu      sync.Mutex
+	reasons map[string]int
+}
+
+func (r *fakeErrorRecorder) RecordProxyError(_, reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.reasons == nil {
+		r.reasons = make(map[string]int)
+	}
+
+	r.reasons[reason]++
+}
+
+func (r *fakeErrorRecorder) count(reason string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.reasons[reason]
 }
 
 func (s *ProxySuite) TestPerBackendCircuitBreaker() {
