@@ -29,6 +29,7 @@ const (
 	metricRPCInspectTotal    = "wafsrv_rpc_inspect_total"
 	metricAdaptiveTrigger    = "wafsrv_adaptive_trigger_total"
 	metricAdaptiveAttack     = "wafsrv_adaptive_attack_total"
+	metricProxyErrorsTotal   = "wafsrv_proxy_errors_total"
 )
 
 // appMetrics holds all prometheus metrics for the application.
@@ -65,6 +66,9 @@ type appMetrics struct {
 	// adaptive
 	adaptiveTrigger *prometheus.CounterVec
 	adaptiveAttack  *prometheus.CounterVec
+
+	// proxy
+	proxyErrorsTotal *prometheus.CounterVec
 }
 
 // newMetrics creates all prometheus metrics and registers them.
@@ -137,6 +141,11 @@ func newMetrics() *appMetrics {
 			Name: metricAdaptiveAttack,
 			Help: "Total adaptive auto-attack mode toggles.",
 		}, []string{"action"}),
+
+		proxyErrorsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: metricProxyErrorsTotal,
+			Help: "Total proxy errors by target and reason (cb_open / upstream_error / no_backends).",
+		}, []string{"target", "reason"}),
 	}
 
 	m.registry.MustRegister(
@@ -153,9 +162,23 @@ func newMetrics() *appMetrics {
 		m.rpcInspectTotal,
 		m.adaptiveTrigger,
 		m.adaptiveAttack,
+		m.proxyErrorsTotal,
 	)
 
 	return m
+}
+
+// proxyErrorRecorder adapts the proxy_errors_total counter to proxy.ErrorRecorder.
+type proxyErrorRecorder struct {
+	v *prometheus.CounterVec
+}
+
+func (r *proxyErrorRecorder) RecordProxyError(target, reason string) {
+	r.v.WithLabelValues(target, reason).Inc()
+}
+
+func (m *appMetrics) proxyErrorRecorder() *proxyErrorRecorder {
+	return &proxyErrorRecorder{v: m.proxyErrorsTotal}
 }
 
 // ipMetrics returns ip.Metrics populated from appMetrics.

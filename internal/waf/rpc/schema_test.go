@@ -76,6 +76,36 @@ func (s *SchemaSuite) TestNoMethodsFound() {
 	s.Error(err)
 }
 
+func (s *SchemaSuite) TestParseMCPTools() {
+	data := []byte(`{"jsonrpc":"2.0","id":1,"result":{"tools":[
+		{"name":"search_issues","description":"Search issues"},
+		{"name":"create_issue","description":"Create issue"},
+		{"name":"get_issue","description":"Get issue"}
+	]}}`)
+
+	methods, err := ParseMCPTools(data)
+	s.Require().NoError(err)
+
+	s.Contains(methods, "tools/call:search_issues")
+	s.Contains(methods, "tools/call:create_issue")
+	s.Contains(methods, "tools/call:get_issue")
+	s.Contains(methods, "initialize")
+	s.Contains(methods, "tools/list")
+	s.Contains(methods, "tools/call")
+}
+
+func (s *SchemaSuite) TestParseMCPToolsEmpty() {
+	data := []byte(`{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`)
+
+	_, err := ParseMCPTools(data)
+	s.Error(err)
+}
+
+func (s *SchemaSuite) TestParseMCPToolsInvalid() {
+	_, err := ParseMCPTools([]byte(`not json`))
+	s.Error(err)
+}
+
 func (s *SchemaSuite) TestResolveSchemaURL() {
 	tests := []struct {
 		schema string

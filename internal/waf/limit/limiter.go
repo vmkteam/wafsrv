@@ -26,16 +26,28 @@ type Config struct {
 	PerIP       Rate
 	Action      string // "block" | "throttle"
 	MaxCounters int
-	Rules       []Rule
+	Rules       []Rule    // RPC method matching
+	URLRules    []URLRule // HTTP path/method/host matching
 }
 
-// Rule defines a per-method rate limit.
+// Rule defines a per-method rate limit (JSON-RPC matching).
 type Rule struct {
 	Name     string
 	Endpoint string // JSONRPC.Endpoints[].Name, "" = all
 	Match    []string
 	Limit    Rate
 	Action   string
+}
+
+// URLRule defines a per-URL rate limit (HTTP path/method/host matching).
+// AND-semantics across non-empty fields.
+type URLRule struct {
+	Name   string
+	Path   []string // URL path prefix list
+	Method []string // HTTP method list, e.g. ["GET","POST"]
+	Host   []string // HTTP Host header list (optional, for multi-host wafsrv)
+	Limit  Rate
+	Action string
 }
 
 // Rate is a parsed rate limit (count per duration).
@@ -121,19 +133,15 @@ func (l *Limiter) Middleware() func(http.Handler) http.Handler {
 
 			if rc.RPC != nil {
 				if rule := l.matchRule(rc.RPC); rule != nil {
-					key := rc.ClientIP.String() + ":" + rc.Discriminator + ":" + rule.Name
-					if !l.allowKey(key, rule.Limit) {
-						l.metrics.ExceededTotal.WithLabelValues(rule.Name, rule.Action).Inc()
-						l.addEvent(rc.ClientIP.String(), r.URL.Path, rule.Name, rc.Platform)
-						l.Print(r.Context(), "rate_limit",
-							"clientIp", rc.ClientIP.String(),
-							"rule", rule.Name,
-							"action", rule.Action,
-						)
-						l.reject(w)
-
+					if !l.enforce(w, r, rc, rule.Name, rule.Action, rule.Limit) {
 						return
 					}
+				}
+			}
+
+			if rule := l.matchURLRule(r); rule != nil {
+				if !l.enforce(w, r, rc, rule.Name, rule.Action, rule.Limit) {
+					return
 				}
 			}
 
@@ -171,6 +179,67 @@ func (l *Limiter) matchRule(rpc *waf.RPCCall) *Rule {
 	}
 
 	return nil
+}
+
+func (l *Limiter) matchURLRule(r *http.Request) *URLRule {
+	for i := range l.cfg.URLRules {
+		rule := &l.cfg.URLRules[i]
+
+		if len(rule.Path) > 0 && !hasAnyPrefix(rule.Path, r.URL.Path) {
+			continue
+		}
+
+		if len(rule.Method) > 0 && !contains(rule.Method, r.Method) {
+			continue
+		}
+
+		if len(rule.Host) > 0 && !contains(rule.Host, r.Host) {
+			continue
+		}
+
+		return rule
+	}
+
+	return nil
+}
+
+// enforce applies rate limit for a matched rule. Returns false if request was rejected.
+func (l *Limiter) enforce(w http.ResponseWriter, r *http.Request, rc *waf.RequestContext, name, action string, rt Rate) bool {
+	key := rc.ClientIP.String() + ":" + rc.Discriminator + ":" + name
+	if l.allowKey(key, rt) {
+		return true
+	}
+
+	l.metrics.ExceededTotal.WithLabelValues(name, action).Inc()
+	l.addEvent(rc.ClientIP.String(), r.URL.Path, name, rc.Platform)
+	l.Print(r.Context(), "rate_limit",
+		"clientIp", rc.ClientIP.String(),
+		"rule", name,
+		"action", action,
+	)
+	l.reject(w)
+
+	return false
+}
+
+func hasAnyPrefix(list []string, value string) bool {
+	for _, p := range list {
+		if strings.HasPrefix(value, p) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func contains(list []string, value string) bool {
+	for _, v := range list {
+		if v == value {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (l *Limiter) addEvent(clientIP, path, rule, platform string) {

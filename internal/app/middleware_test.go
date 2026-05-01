@@ -1,8 +1,16 @@
 package app
 
 import (
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
+	"wafsrv/internal/waf/event"
+
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -57,4 +65,37 @@ func (s *MiddlewareSuite) TestStatusBucket() {
 	s.Equal("4xx", statusBucket(404))
 	s.Equal("5xx", statusBucket(500))
 	s.Equal("5xx", statusBucket(503))
+}
+
+func (s *MiddlewareSuite) TestAccessLogPanicReturns500() {
+	rec := event.NewRecorder(
+		event.NewBuffer(1),
+		event.NewSeries(time.Second, 1),
+		event.NewTops(time.Minute, 100),
+	)
+
+	cfg := accessLogConfig{
+		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		serviceName: "test",
+		requestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "test_requests_total",
+			Help: "test counter",
+		}, []string{"service", "method", "status", "platform", "traffic_type"}),
+		requestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "test_request_duration_seconds",
+			Help: "test histogram",
+		}, []string{"service", "method", "target"}),
+		recorder:    rec,
+		platformSet: map[string]struct{}{},
+	}
+
+	handler := accessLog(cfg)(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		panic("boom")
+	}))
+
+	rw := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	handler.ServeHTTP(rw, req)
+
+	s.Equal(http.StatusInternalServerError, rw.Code, "panic should produce 500")
 }

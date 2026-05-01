@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -124,13 +125,7 @@ func (a *Alerter) matchesEvent(wh *Webhook, eventType string) bool {
 		return true // no filter = all events
 	}
 
-	for _, e := range wh.Events {
-		if e == eventType {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(wh.Events, eventType)
 }
 
 func (a *Alerter) shouldSend(wh *Webhook, eventType string) bool {
@@ -205,18 +200,15 @@ func formatPayload(event Event) ([]byte, error) {
 		emoji = "\xe2\x84\xb9\xef\xb8\x8f" // ℹ️
 	}
 
-	// line 1: emoji + type + message
-	title := fmt.Sprintf("%s **%s** — %s", emoji, event.Type, event.Message)
-
-	// line 2: details
-	var details []string
+	var parts []string
+	parts = append(parts, fmt.Sprintf("%s **%s** — %s", emoji, event.Type, event.Message))
 
 	if event.IP != "" {
-		details = append(details, "IP: "+event.IP+formatGeo(event.Country, event.ASN))
+		parts = append(parts, "IP: "+event.IP+formatGeo(event.Country, event.ASN))
 	}
 
 	if event.Score > 0 {
-		details = append(details, fmt.Sprintf("Score: %.0f", event.Score))
+		parts = append(parts, fmt.Sprintf("Score: %.0f", event.Score))
 	}
 
 	if event.Service != "" {
@@ -224,13 +216,10 @@ func formatPayload(event Event) ([]byte, error) {
 		if event.Instance != "" {
 			svc += "/" + event.Instance
 		}
-		details = append(details, svc)
+		parts = append(parts, svc)
 	}
 
-	text := title
-	if len(details) > 0 {
-		text += "\n> " + strings.Join(details, " · ")
-	}
+	text := strings.Join(parts, " · ")
 
 	payload := struct {
 		Text string `json:"text"`

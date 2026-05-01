@@ -65,7 +65,7 @@ func accessLog(cfg accessLogConfig) Middleware {
 					stack := make([]byte, 4096)
 					stack = stack[:runtime.Stack(stack, false)]
 					cfg.logger.ErrorContext(r.Context(), "panic recovered", "panic", rvr, "stack", string(stack))
-					rec.WriteHeader(http.StatusBadGateway)
+					rec.WriteHeader(http.StatusInternalServerError)
 				}
 
 				duration := time.Since(start)
@@ -239,7 +239,7 @@ func rpcParser(endpoints []JSONRPCEndpoint) Middleware {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodPost && r.Body != nil && !isStaticRequest(r) {
 				if ep := matchRPCPath(r.URL.Path, endpoints); ep != nil {
-					parseRPCBody(r, ep.Name)
+					parseRPCBody(r, ep.Name, ep.MCPMode)
 				}
 			}
 
@@ -258,7 +258,7 @@ func matchRPCPath(path string, endpoints []JSONRPCEndpoint) *JSONRPCEndpoint {
 	return nil
 }
 
-func parseRPCBody(r *http.Request, endpointName string) {
+func parseRPCBody(r *http.Request, endpointName string, mcpMode bool) {
 	bufp, _ := rpcBufPool.Get().(*[]byte)
 	buf := (*bufp)[:0]
 
@@ -289,7 +289,7 @@ func parseRPCBody(r *http.Request, endpointName string) {
 	// restore body for downstream handlers
 	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
 
-	call := rpc.Parse(body, endpointName)
+	call := rpc.Parse(body, endpointName, mcpMode)
 	if call == nil {
 		return
 	}

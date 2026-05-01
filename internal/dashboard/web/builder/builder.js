@@ -148,6 +148,12 @@ function builder() {
     // --- RateLimit Rules ---
     addRateLimitRule() { this.cfg.rateLimit.rules.push(this.defaultRateLimitRule()); this.onChange(); },
     removeRateLimitRule(i) { this.cfg.rateLimit.rules.splice(i, 1); this.onChange(); },
+    addRateLimitURLRule() {
+      if (!this.cfg.rateLimit.urlRules) this.cfg.rateLimit.urlRules = [];
+      this.cfg.rateLimit.urlRules.push(this.defaultRateLimitURLRule());
+      this.onChange();
+    },
+    removeRateLimitURLRule(i) { this.cfg.rateLimit.urlRules.splice(i, 1); this.onChange(); },
 
     // --- Traffic Filter Rules ---
     addTrafficRule() { this.cfg.trafficFilter.rules.push(this.defaultTrafficRule()); this.onChange(); },

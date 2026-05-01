@@ -134,13 +134,15 @@
         </div>
       </details>
       <details class="sub-section">
-        <summary>Circuit Breaker</summary>
+        <summary>Circuit Breaker &amp; Error Codes</summary>
         <div class="sub-body">
           <div class="field"><label class="toggle-label"><input type="checkbox" x-model="cfg.proxy.circuitBreaker.enabled" @change="onChange()"> Enabled</label></div>
           <div class="field-grid">
             <div class="field"><label>Threshold</label><input type="number" x-model.number="cfg.proxy.circuitBreaker.threshold" placeholder="10" @input="onChange()"></div>
             <div class="field"><label>Timeout</label><input type="text" x-model="cfg.proxy.circuitBreaker.timeout" placeholder="30s" @input="onChange()"></div>
+            <div class="field"><label>No-Backend Retry-After</label><input type="text" x-model="cfg.proxy.noBackendRetryAfter" placeholder="5s" @input="onChange()"></div>
           </div>
+          <p class="sub-hint" style="margin-top:.5rem">CB open / half-open exceeded → 503 + Retry-After (=Timeout). Empty pool → 503 + Retry-After (=No-Backend Retry-After). TCP refused / DNS / read timeout → 502. Pipeline panic → 500.</p>
         </div>
       </details>
       <details class="sub-section">
@@ -232,7 +234,7 @@
   <div class="section" :class="!cfg.rateLimit.enabled && 'section-off'">
     <div class="section-header">
       <label class="toggle-label"><input type="checkbox" x-model="cfg.rateLimit.enabled" @change="onChange()"> <span class="section-title">RateLimit</span></label>
-      <span class="section-summary" x-text="cfg.rateLimit.enabled ? cfg.rateLimit.perIP + ' ' + cfg.rateLimit.action + ' ' + cfg.rateLimit.rules.length + ' rules' : 'disabled'"></span>
+      <span class="section-summary" x-text="cfg.rateLimit.enabled ? cfg.rateLimit.perIP + ' ' + cfg.rateLimit.action + ' ' + cfg.rateLimit.rules.length + ' rules / ' + (cfg.rateLimit.urlRules ? cfg.rateLimit.urlRules.length : 0) + ' urlRules' : 'disabled'"></span>
     </div>
     <div class="section-body" x-show="cfg.rateLimit.enabled" x-collapse>
       <p class="section-desc">Per-IP token bucket rate limiting. Global limit uses IP only. Per-method rules use composite key IP:Platform:fnv32(UA) to prevent NAT collateral damage. Rate format: N/(sec|min|hour).</p>
@@ -292,6 +294,52 @@
         </div>
       </template>
       <button class="btn-add" @click="addRateLimitRule()">+ Add rule</button>
+
+      <!-- URL Rules -->
+      <h4 class="section-sub">URL Rules</h4>
+      <p class="section-desc">HTTP path/method/host matching (AND-semantics). At least one of Path/Method/Host required. Applies to any HTTP request, including non-RPC traffic.</p>
+      <template x-for="(r, i) in (cfg.rateLimit.urlRules || [])" :key="i">
+        <div class="item-card">
+          <div class="item-header">
+            <span x-text="r.name || 'urlRule ' + (i+1)"></span>
+            <button class="btn-icon" @click="removeRateLimitURLRule(i)">&times;</button>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>Name</label><input type="text" x-model="cfg.rateLimit.urlRules[i].name" placeholder="search-catalog" @input="onChange()"></div>
+            <div class="field"><label>Limit</label><input type="text" x-model="cfg.rateLimit.urlRules[i].limit" placeholder="10/min" @input="onChange()"></div>
+          </div>
+          <div class="field">
+            <label>Path (prefix)</label>
+            <div class="chips-input">
+              <template x-for="(p, pi) in r.path" :key="pi"><span class="chip"><span x-text="p"></span><button @click="cfg.rateLimit.urlRules[i].path.splice(pi,1); onChange()">&times;</button></span></template>
+              <input type="text" placeholder="/search/all/, /movies/catalog/..." @keydown.enter.prevent="addChip('rateLimit.urlRules.' + i + '.path', $event)" @keydown.comma.prevent="addChip('rateLimit.urlRules.' + i + '.path', $event)" @keydown.backspace="popChip('rateLimit.urlRules.' + i + '.path', $event)">
+            </div>
+          </div>
+          <div class="field">
+            <label>Method</label>
+            <div class="chips-input">
+              <template x-for="(m, mi) in r.method" :key="mi"><span class="chip"><span x-text="m"></span><button @click="cfg.rateLimit.urlRules[i].method.splice(mi,1); onChange()">&times;</button></span></template>
+              <input type="text" placeholder="GET, POST..." @keydown.enter.prevent="addChip('rateLimit.urlRules.' + i + '.method', $event)" @keydown.comma.prevent="addChip('rateLimit.urlRules.' + i + '.method', $event)" @keydown.backspace="popChip('rateLimit.urlRules.' + i + '.method', $event)">
+            </div>
+          </div>
+          <div class="field">
+            <label>Host (exact, optional)</label>
+            <div class="chips-input">
+              <template x-for="(h, hi) in r.host" :key="hi"><span class="chip"><span x-text="h"></span><button @click="cfg.rateLimit.urlRules[i].host.splice(hi,1); onChange()">&times;</button></span></template>
+              <input type="text" placeholder="api.example.com..." @keydown.enter.prevent="addChip('rateLimit.urlRules.' + i + '.host', $event)" @keydown.comma.prevent="addChip('rateLimit.urlRules.' + i + '.host', $event)" @keydown.backspace="popChip('rateLimit.urlRules.' + i + '.host', $event)">
+            </div>
+          </div>
+          <div class="field">
+            <label>Action override</label>
+            <select x-model="cfg.rateLimit.urlRules[i].action" @change="onChange()">
+              <option value="">inherit</option>
+              <option value="block">block</option>
+              <option value="throttle">throttle</option>
+            </select>
+          </div>
+        </div>
+      </template>
+      <button class="btn-add" @click="addRateLimitURLRule()">+ Add URL rule</button>
     </div>
   </div>
 

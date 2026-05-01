@@ -168,6 +168,7 @@ function builderImport() {
         if (p.Targets) cfg.proxy.targets = [...p.Targets];
         if (p.ServiceName) cfg.proxy.serviceName = p.ServiceName;
         if (p.Platforms) cfg.proxy.platforms = [...p.Platforms];
+        if (p.NoBackendRetryAfter) cfg.proxy.noBackendRetryAfter = p.NoBackendRetryAfter;
         if (p.Timeouts) {
           if (p.Timeouts.Read) cfg.proxy.timeouts.read = p.Timeouts.Read;
           if (p.Timeouts.Write) cfg.proxy.timeouts.write = p.Timeouts.Write;
@@ -195,7 +196,7 @@ function builderImport() {
           ...this.defaultEndpoint(),
           path: e.Path || '/rpc/', name: e.Name || 'main',
           schemaURL: e.SchemaURL || '', schemaRefresh: e.SchemaRefresh || '5m',
-          methodWhitelist: e.MethodWhitelist || false, maxBatchSize: e.MaxBatchSize || 0,
+          methodWhitelist: e.MethodWhitelist || false, maxBatchSize: e.MaxBatchSize || 0, mcpMode: e.MCPMode || false,
         }));
       }
 
@@ -220,6 +221,17 @@ function builderImport() {
             ...this.defaultRateLimitRule(),
             name: r.Name || '', endpoint: r.Endpoint || '',
             match: r.Match ? [...r.Match] : [], limit: r.Limit || '10/min', action: r.Action || '',
+          }));
+        }
+        if (t.RateLimit.URLRules) {
+          cfg.rateLimit.urlRules = t.RateLimit.URLRules.map(r => ({
+            ...this.defaultRateLimitURLRule(),
+            name: r.Name || '',
+            path: r.Path ? [...r.Path] : [],
+            method: r.Method ? [...r.Method] : [],
+            host: r.Host ? [...r.Host] : [],
+            limit: r.Limit || '10/min',
+            action: r.Action || '',
           }));
         }
       }

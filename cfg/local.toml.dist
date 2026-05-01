@@ -2,6 +2,7 @@
 Listen = ":8080"
 Targets = ["http://localhost:3000"]
 ServiceName = "apisrv"
+# NoBackendRetryAfter = "5s"  # Retry-After header on 503 when backend pool is empty
 
 # DNS SRV discovery (alternative to Targets, mutually exclusive)
 # [Proxy.TargetDiscovery]
@@ -37,10 +38,11 @@ Timeout = "30s"
 [[JSONRPC.Endpoints]]
 Path = "/rpc/"
 Name = "main"
-# SchemaURL = "/rpc/"               # relative → Proxy.Targets[0], auto-detect SMD/OpenRPC
+# SchemaURL = "/rpc/"               # relative → Proxy.Targets[0], auto-detect SMD/OpenRPC/MCP
 # SchemaRefresh = "5m"
 # MethodWhitelist = true             # block unknown methods (fail-open if schema unavailable)
 # MaxBatchSize = 20                  # max methods in batch (0 = no limit)
+# MCPMode = false                    # MCP: extract params.name for tools/call → "tools/call:tool_name"
 
 [Management]
 Listen = "127.0.0.1:8081"
@@ -80,6 +82,20 @@ Listen = "127.0.0.1:8081"
 # Match = ["auth.login", "auth.loginByPhone"]
 # Limit = "10/min"
 # Action = "block"
+#
+# # URL-based rules (HTTP path/method/host matching, AND-semantics).
+# [[RateLimit.URLRules]]
+# Name = "search-catalog"
+# Path = ["/search/all/", "/movies/catalog/"]
+# Method = ["GET"]
+# Limit = "10/min"
+# Action = "block"
+#
+# [[RateLimit.URLRules]]
+# Name = "multi-host-search"
+# Host = ["api.example.com"]   # for multi-host wafsrv setups
+# Path = ["/search/"]
+# Limit = "20/min"
 
 # === IP Intelligence ===
 # GeoIP databases are embedded in the binary (make geo-download before build).
