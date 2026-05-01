@@ -134,6 +134,43 @@ Limit = "10/min"
 	s.Contains(err.Error(), "Path/Method/Host")
 }
 
+func (s *ConfigSuite) TestValidateAdaptiveBoostExceedsCaptchaThreshold() {
+	path := s.writeConfig(`
+[Proxy]
+Targets = ["http://localhost:3000"]
+ServiceName = "test-svc"
+
+[Decision]
+CaptchaThreshold = 5
+BlockThreshold = 8
+
+[Adaptive.AutoAttack]
+ScoreBoost = 6
+`)
+
+	_, err := LoadConfig(path)
+	s.Require().Error(err, "ScoreBoost >= CaptchaThreshold must fail validation")
+	s.Contains(err.Error(), "ScoreBoost")
+}
+
+func (s *ConfigSuite) TestValidateAdaptiveBoostBelowThresholdOK() {
+	path := s.writeConfig(`
+[Proxy]
+Targets = ["http://localhost:3000"]
+ServiceName = "test-svc"
+
+[Decision]
+CaptchaThreshold = 5
+BlockThreshold = 8
+
+[Adaptive.AutoAttack]
+ScoreBoost = 2
+`)
+
+	_, err := LoadConfig(path)
+	s.Require().NoError(err, "ScoreBoost < CaptchaThreshold should be OK")
+}
+
 func (s *ConfigSuite) TestValidateDuplicateRuleName() {
 	path := s.writeConfig(`
 [Proxy]

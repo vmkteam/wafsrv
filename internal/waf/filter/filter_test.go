@@ -1,9 +1,16 @@
 package filter
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
+
+	"wafsrv/internal/waf"
+	"wafsrv/internal/waf/event"
 
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/suite"
 	"github.com/vmkteam/embedlog"
 )
@@ -15,6 +22,14 @@ type FilterSuite struct {
 func TestFilter(t *testing.T) {
 	suite.Run(t, new(FilterSuite))
 }
+
+// fakeAttackState is a controllable AttackState for tests.
+type fakeAttackState struct{ on bool }
+
+func (f *fakeAttackState) IsEnabled() bool { return f.on }
+
+// attackOff returns an always-off AttackState (peace time).
+func attackOff() waf.AttackState { return &fakeAttackState{on: false} }
 
 func (s *FilterSuite) TestSingleField_UAPrefix() {
 	r := TrafficRule{Name: "python", Action: "block", UAPrefix: []string{"Python/"}}
@@ -105,6 +120,7 @@ func (s *FilterSuite) TestUAPrefix_SubstringNoMatch() {
 func (s *FilterSuite) TestDynamic_AddRemoveList() {
 	f := New(
 		[]TrafficRule{{Name: "static-rule", Action: "block", UAPrefix: []string{"Python/"}}},
+		attackOff(),
 		embedlog.NewLogger(false, false), Metrics{MatchedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test_total", Help: "test"}, []string{"rule", "action"})},
 	)
 
@@ -140,6 +156,7 @@ func (s *FilterSuite) TestTestRequest() {
 			{Name: "python", Action: "block", UAPrefix: []string{"Python/"}},
 			{Name: "geo", Action: "captcha", Country: []string{"CN"}},
 		},
+		attackOff(),
 		embedlog.NewLogger(false, false), Metrics{MatchedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test2_total", Help: "test"}, []string{"rule", "action"})},
 	)
 
@@ -303,4 +320,73 @@ func (s *FilterSuite) TestTripleField_AND() {
 	s.True(r.isActive(MatchRequest{Platform: "Desktop", Version: "149bd482", Method: "POST"}))
 	s.False(r.isActive(MatchRequest{Platform: "Desktop", Version: "149bd482", Method: "GET"}))
 	s.False(r.isActive(MatchRequest{Platform: "Mobile", Version: "149bd482", Method: "POST"}))
+}
+
+func (s *FilterSuite) TestAttackOnly_GatedByAttackState() {
+	cases := []struct {
+		name     string
+		attackOn bool
+		path     string
+		wantCode int
+	}{
+		{"attack off, attack-only path → pass", false, "/search/all", http.StatusOK},
+		{"attack on, attack-only path → block", true, "/search/all", http.StatusForbidden},
+		{"attack off, regular always-on rule still blocks", false, "/admin", http.StatusForbidden},
+		{"attack on, regular always-on rule still blocks", true, "/admin", http.StatusForbidden},
+	}
+
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			st := &fakeAttackState{on: tc.attackOn}
+			attackOnlyTotal := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test_attack_only_total", Help: "t"}, []string{"rule"})
+			matched := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test_matched_" + tc.name, Help: "t"}, []string{"rule", "action"})
+
+			f := New(
+				[]TrafficRule{
+					{Name: "always-admin", Action: "block", Path: []string{"/admin"}},
+					{Name: "attack-search", Action: "block", AttackOnly: true, Path: []string{"/search/"}},
+				},
+				st,
+				embedlog.NewLogger(false, false),
+				Metrics{
+					MatchedTotal:    matched,
+					AttackOnlyTotal: attackOnlyTotal,
+					Recorder:        event.NewRecorder(event.NewBuffer(1), event.NewSeries(time.Second, 1), event.NewTops(time.Minute, 1)),
+				},
+			)
+
+			h := f.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req = req.WithContext(waf.NewContext(req.Context(), &waf.RequestContext{}))
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			s.Equal(tc.wantCode, rec.Code)
+
+			// AttackOnly counter must reflect only AttackOnly fires
+			got := testutilCounterValue(attackOnlyTotal, "attack-search")
+			if tc.attackOn && tc.path == "/search/all" {
+				s.InDelta(1.0, got, 0.0001, "AttackOnlyTotal should fire for matched attack-only rule")
+			} else {
+				s.InDelta(0.0, got, 0.0001, "AttackOnlyTotal must not fire when rule does not match or attack off")
+			}
+		})
+	}
+}
+
+func testutilCounterValue(v *prometheus.CounterVec, label string) float64 {
+	c, err := v.GetMetricWithLabelValues(label)
+	if err != nil {
+		return 0
+	}
+
+	m := &dto.Metric{}
+	if err := c.Write(m); err != nil {
+		return 0
+	}
+
+	return m.GetCounter().GetValue()
 }

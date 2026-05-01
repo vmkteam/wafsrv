@@ -242,6 +242,15 @@ Listen = "127.0.0.1:8081"
 # ErrorRateThreshold = 20            # trigger if error % > N (0 = disabled)
 # LatencyThresholdMs = 500           # trigger if avg latency > N ms (0 = disabled)
 # BlockedRateThreshold = 50          # trigger if blocked % > N (0 = disabled)
+# ScoreBoost = 0                     # +N to WAFScore during attack mode (must be < Decision.CaptchaThreshold)
 # Window = "1m"
 # Cooldown = "5m"
 # Duration = "10m"
+
+# === AttackOnly TrafficFilter rule (active only during Under Attack Mode) ===
+#
+# [[TrafficFilter.Rules]]
+# Name = "search-attack-challenge"
+# AttackOnly = true                   # rule is dormant in peace time, fires only when attack mode is on
+# Action = "captcha"
+# Path = ["/search/", "/catalog/"]

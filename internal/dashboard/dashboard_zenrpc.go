@@ -178,8 +178,9 @@ func (AttackService) SMD() smd.ServiceInfo {
 				},
 			},
 			"IsEnabled": {
-				Description: `IsEnabled returns whether Under Attack Mode is active (for middleware).`,
-				Parameters:  []smd.JSONSchema{},
+				Description: `IsEnabled returns whether Under Attack Mode is active. Lock-free fast path
+(single atomic load) so it can be called from per-request middleware.`,
+				Parameters: []smd.JSONSchema{},
 				Returns: smd.JSONSchema{
 					Type: smd.Boolean,
 				},
@@ -961,6 +962,11 @@ func (ConfigService) SMD() smd.ServiceInfo {
 									Name: "ruleCount",
 									Type: smd.Integer,
 								},
+								{
+									Name:        "attackOnlyCount",
+									Description: `rules dormant outside Under Attack Mode`,
+									Type:        smd.Integer,
+								},
 							},
 						},
 						"SigningSection": {
@@ -1145,6 +1151,11 @@ func (ConfigService) SMD() smd.ServiceInfo {
 								{
 									Name: "blockedRate",
 									Type: smd.Float,
+								},
+								{
+									Name:        "scoreBoost",
+									Description: `additive WAFScore bonus during attack mode (Decision.AttackScoreBoost)`,
+									Type:        smd.Float,
 								},
 								{
 									Name: "window",

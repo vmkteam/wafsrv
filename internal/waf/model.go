@@ -2,6 +2,13 @@ package waf
 
 import "net/netip"
 
+// AttackState exposes Under Attack Mode status to consumers (filter, decide).
+// Lives in this package to avoid filter/decide depending on the dashboard
+// package that owns the production implementation (dashboard.AttackService).
+type AttackState interface {
+	IsEnabled() bool
+}
+
 // Action represents a WAF decision action.
 type Action int
 
@@ -49,6 +56,7 @@ type RequestContext struct {
 	RPC           *RPCCall
 	IP            *IPInfo // filled by ip.Middleware
 	WAFScore      float64 // filled by engine.Middleware
+	AttackBoost   float64 // filled by decide.Middleware when AttackScoreBoost lifted score in attack mode
 	Decision      Action  // filled by decide.Middleware
 	TrafficType   string  // filled by sign.Middleware
 	Target        string  // filled by proxy handler (backend URL)

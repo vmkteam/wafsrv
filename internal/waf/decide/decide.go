@@ -24,6 +24,7 @@ import (
 type Config struct {
 	CaptchaThreshold     float64
 	BlockThreshold       float64
+	AttackScoreBoost     float64 // additive bonus to score during Under Attack Mode
 	CaptchaStatusCode    int
 	BlockStatusCode      int
 	CaptchaToBlock       int
@@ -48,9 +49,10 @@ type PlatformConfig struct {
 
 // Metrics holds decision engine prometheus metrics.
 type Metrics struct {
-	DecisionTotal *prometheus.CounterVec
-	Recorder      *event.Recorder
-	PlatformSet   map[string]struct{}
+	DecisionTotal   *prometheus.CounterVec
+	AttackBoostUsed *prometheus.CounterVec // labels: result (captcha|block) — fires when boost moved decision
+	Recorder        *event.Recorder
+	PlatformSet     map[string]struct{}
 }
 
 // Engine evaluates request score and decides pass/captcha/block.
@@ -61,6 +63,7 @@ type Engine struct {
 	powVerifier *challenge.PowVerifier
 	store       storage.KVStore
 	alerter     alerting.Sender
+	attackState waf.AttackState
 	embedlog.Logger
 	metrics Metrics
 }
@@ -71,8 +74,10 @@ type scoreEntry struct {
 	BlockedUntil time.Time `json:"b"`
 }
 
-// New creates a new decision engine.
-func New(cfg Config, store storage.KVStore, cache *challenge.Cache, verifier *challenge.Verifier, powVerifier *challenge.PowVerifier, alerter alerting.Sender, sl embedlog.Logger, metrics Metrics) *Engine {
+// New creates a new decision engine. attackState MUST be non-nil — it is read
+// on every request to gate AttackScoreBoost. Pass dashboard.AttackService in
+// production; a stub `IsEnabled() bool { return false }` works in tests.
+func New(cfg Config, store storage.KVStore, cache *challenge.Cache, verifier *challenge.Verifier, powVerifier *challenge.PowVerifier, alerter alerting.Sender, attackState waf.AttackState, sl embedlog.Logger, metrics Metrics) *Engine {
 	return &Engine{
 		cfg:         cfg,
 		store:       store,
@@ -80,6 +85,7 @@ func New(cfg Config, store storage.KVStore, cache *challenge.Cache, verifier *ch
 		verifier:    verifier,
 		powVerifier: powVerifier,
 		alerter:     alerter,
+		attackState: attackState,
 		Logger:      sl,
 		metrics:     metrics,
 	}
@@ -124,6 +130,24 @@ func (e *Engine) Middleware() func(http.Handler) http.Handler { //nolint:gocogni
 			}
 
 			score := rc.WAFScore
+
+			// Under Attack Mode: lift score by AttackScoreBoost so borderline
+			// requests fall into captcha/block buckets without changing thresholds.
+			// rc.WAFScore stays authoritative for upstream scorers; rc.AttackBoost
+			// records the applied delta so access logs can correlate boosted
+			// decisions with this request.
+			if e.cfg.AttackScoreBoost > 0 && e.attackState.IsEnabled() {
+				boosted := score + e.cfg.AttackScoreBoost
+				rc.AttackBoost = e.cfg.AttackScoreBoost
+
+				if e.metrics.AttackBoostUsed != nil {
+					if result := e.boostCrossing(score, boosted); result != "" {
+						e.metrics.AttackBoostUsed.WithLabelValues(result).Inc()
+					}
+				}
+
+				score = boosted
+			}
 
 			// no thresholds configured — pass through
 			if e.cfg.BlockThreshold == 0 && e.cfg.CaptchaThreshold == 0 {
@@ -321,6 +345,25 @@ func (e *Engine) recordCaptcha(ctx context.Context, key string) {
 
 	if data, err := json.Marshal(entry); err == nil {
 		_ = e.store.Set(storeKey, data, ttl)
+	}
+}
+
+// Metric label values for AttackBoostUsed.
+const (
+	boostResultBlock   = "block"
+	boostResultCaptcha = "captcha"
+)
+
+// boostCrossing returns the threshold the boost pushed the score across, or ""
+// if the boost was a no-op (already above or still below thresholds).
+func (e *Engine) boostCrossing(orig, boosted float64) string {
+	switch {
+	case e.cfg.BlockThreshold > 0 && boosted >= e.cfg.BlockThreshold && orig < e.cfg.BlockThreshold:
+		return boostResultBlock
+	case e.cfg.CaptchaThreshold > 0 && boosted >= e.cfg.CaptchaThreshold && orig < e.cfg.CaptchaThreshold:
+		return boostResultCaptcha
+	default:
+		return ""
 	}
 }
 

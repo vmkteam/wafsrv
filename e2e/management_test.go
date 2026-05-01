@@ -89,6 +89,47 @@ func (s *E2ESuite) Test08_Attack_EnableNoDuration() {
 	s.mgmtRPC("attack.disable", "{}")
 }
 
+func (s *E2ESuite) Test08_Attack_AttackOnlyRule_GatedByMode() {
+	// Ensure clean state on entry and on exit (avoid bleed-through if assertions abort).
+	s.mgmtRPC("attack.disable", "{}")
+	defer s.mgmtRPC("attack.disable", "{}")
+
+	const attackUA = "E2EAttackBot/1.0"
+
+	// Peace time: the AttackOnly rule must NOT fire.
+	s.Equal(http.StatusOK, s.getStatus(dataURL+"/", attackUA),
+		"AttackOnly rule must be dormant when attack mode is off")
+
+	// Enable attack mode and observe the rule blocking the same UA.
+	result := s.mgmtRPC("attack.enable", `{"duration":"5m"}`)
+	s.Contains(result, `"enabled":true`)
+
+	s.Equal(http.StatusForbidden, s.getStatus(dataURL+"/", attackUA),
+		"AttackOnly rule must block once attack mode is on")
+
+	// Metric should reflect at least one fire of the AttackOnly rule.
+	s.Contains(s.getMetrics(),
+		`wafsrv_attack_only_match_total{rule="e2e-attack-only-bot"}`,
+		"AttackOnly counter must expose the rule label")
+
+	// Disable: rule goes dormant again.
+	s.mgmtRPC("attack.disable", "{}")
+	s.Equal(http.StatusOK, s.getStatus(dataURL+"/", attackUA),
+		"AttackOnly rule must stop firing once attack mode is off")
+}
+
+// getStatus issues a GET with a custom User-Agent and returns the response status code.
+func (s *E2ESuite) getStatus(url, ua string) int {
+	s.T().Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	s.Require().NoError(err)
+	req.Header.Set("User-Agent", ua)
+	resp, err := http.DefaultClient.Do(req)
+	s.Require().NoError(err)
+	defer resp.Body.Close()
+	return resp.StatusCode
+}
+
 // --- 12: Metrics Consistency ---
 
 func (s *E2ESuite) Test12_Metrics_Consistency() {

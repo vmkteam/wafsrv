@@ -280,7 +280,7 @@ function builderImport() {
         if (t.TrafficFilter.Rules) {
           // Use trafficConditions as single source of truth for TOML↔JS mapping
           cfg.trafficFilter.rules = t.TrafficFilter.Rules.map(r => {
-            const rule = {...this.defaultTrafficRule(), name: r.Name || '', action: r.Action || 'block'};
+            const rule = {...this.defaultTrafficRule(), name: r.Name || '', action: r.Action || 'block', attackOnly: !!r.AttackOnly};
             for (const cond of this.trafficConditions) {
               if (r[cond.toml]) rule[cond.key] = [...r[cond.toml]];
             }
@@ -379,6 +379,7 @@ function builderImport() {
           if (a.ErrorRateThreshold !== undefined) aa.errorRateThreshold = a.ErrorRateThreshold;
           if (a.LatencyThresholdMs !== undefined) aa.latencyThresholdMs = a.LatencyThresholdMs;
           if (a.BlockedRateThreshold !== undefined) aa.blockedRateThreshold = a.BlockedRateThreshold;
+          if (a.ScoreBoost !== undefined) aa.scoreBoost = a.ScoreBoost;
           if (a.Window) aa.window = a.Window;
           if (a.Cooldown) aa.cooldown = a.Cooldown;
           if (a.Duration) aa.duration = a.Duration;

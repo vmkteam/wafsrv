@@ -531,6 +531,7 @@
                 <option value="log">log only</option>
               </select>
             </div>
+            <div class="field"><label class="toggle-label"><input type="checkbox" x-model="cfg.trafficFilter.rules[ri].attackOnly" @change="onChange()"> Attack-only</label></div>
           </div>
 
           <!-- Active conditions -->
@@ -836,6 +837,7 @@
             <div class="field"><label>Latency ms</label><input type="number" x-model.number="cfg.adaptive.autoAttack.latencyThresholdMs" @input="onChange()"></div>
             <div class="field"><label>Blocked Rate %</label><input type="number" x-model.number="cfg.adaptive.autoAttack.blockedRateThreshold" @input="onChange()"></div>
           </div>
+          <div class="field"><label>Score Boost</label><input type="number" step="0.5" x-model.number="cfg.adaptive.autoAttack.scoreBoost" placeholder="0" @input="onChange()"><p class="sub-hint" style="margin:.25rem 0 0">+N to WAFScore while attack mode is on. Must be &lt; Decision.CaptchaThreshold.</p></div>
           <div class="field-grid">
             <div class="field"><label>Window</label><input type="text" x-model="cfg.adaptive.autoAttack.window" placeholder="1m" @input="onChange()"></div>
             <div class="field"><label>Cooldown</label><input type="text" x-model="cfg.adaptive.autoAttack.cooldown" placeholder="5m" @input="onChange()"></div>

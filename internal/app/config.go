@@ -74,6 +74,7 @@ type AutoAttackConfig struct {
 	ErrorRateThreshold    float64 // default 20
 	LatencyThresholdMs    float64 // default 500
 	BlockedRateThreshold  float64 // default 50
+	ScoreBoost            float64 // default 0; +N to score during attack mode (Decision.AttackScoreBoost)
 	Window                string  // default "1m"
 	Cooldown              string  // default "5m"
 	Duration              string  // default "10m"
@@ -521,6 +522,27 @@ func (c *Config) Validate() error {
 
 	if err := c.RateLimit.validate(); err != nil {
 		return err
+	}
+
+	if err := c.adaptiveBoostValidate(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// adaptiveBoostValidate ensures Adaptive.AutoAttack.ScoreBoost cannot push
+// every request straight into the block bucket while attack mode is on —
+// boost must leave at least the captcha gap below the captcha threshold.
+func (c *Config) adaptiveBoostValidate() error {
+	boost := c.Adaptive.AutoAttack.ScoreBoost
+	if boost <= 0 {
+		return nil
+	}
+
+	if c.Decision.CaptchaThreshold > 0 && boost >= c.Decision.CaptchaThreshold {
+		return fmt.Errorf("config: Adaptive.AutoAttack.ScoreBoost (%.1f) must be < Decision.CaptchaThreshold (%.1f), otherwise every request gets challenged in attack mode",
+			boost, c.Decision.CaptchaThreshold)
 	}
 
 	return nil

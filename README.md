@@ -11,10 +11,11 @@ Designed to run as a Docker sidecar in front of your backend service (behind Ngi
 - Dynamic backend discovery via DNS SRV (Consul, Nomad)
 - JSON-RPC 2.0 method extraction (single + batch), deep inspection with schema discovery
 - Real IP extraction from X-Real-IP / X-Forwarded-For with trusted proxy support
+- Differentiated proxy error codes: `503` + `Retry-After` for circuit-breaker open / empty pool, `502` for real upstream errors, `500` for pipeline panics — all surfaced via `wafsrv_proxy_errors_total{target,reason}`
 
 **WAF & Security**
 - [Coraza](https://coraza.io/) WAF engine with OWASP CRS v4 (detection or blocking mode)
-- Per-IP rate limiting (token bucket) with per-method rules and composite keys
+- Per-IP rate limiting (token bucket) with per-method (RPC) and per-URL (HTTP path/method/host) rules and composite keys
 - IP whitelist/blacklist (static config + runtime API)
 - GeoIP country/ASN lookup — block, challenge, or log by country (free [db-ip.com](https://db-ip.com/db/lite.php) databases)
 - IP reputation feeds — FireHOL blacklists, Tor exit nodes, datacenter ASN detection, custom feeds
@@ -28,6 +29,7 @@ Designed to run as a Docker sidecar in front of your backend service (behind Ngi
 - Escalation: N failed challenges -> soft block with TTL
 - Webhook alerting (Slack, Telegram, etc.)
 - Adaptive auto Under Attack Mode (RPS spike, error rate, latency, blocked rate triggers)
+- Attack-time policy expansion: `TrafficFilter.Rules[].AttackOnly` (rule fires only during attack) and `Adaptive.AutoAttack.ScoreBoost` (additive WAFScore bonus while attack is on) — keep aggressive challenges dormant in peace time
 
 **Observability**
 - Prometheus metrics (requests, latency, RPC methods, decisions, rate limits, IP blocks)
