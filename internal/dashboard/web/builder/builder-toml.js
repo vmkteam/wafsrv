@@ -288,6 +288,7 @@ function builderToml() {
         lines.push('[[TrafficFilter.Rules]]');
         lines.push(`Name = ${this._q(r.name)}`);
         lines.push(`Action = ${this._q(r.action)}`);
+        if (r.attackOnly) lines.push('AttackOnly = true');
         for (const cond of this.trafficConditions) {
           if (r[cond.key] && r[cond.key].length > 0) {
             const vals = cond.numeric ? r[cond.key].join(', ') : r[cond.key].map(v => this._q(v)).join(', ');
@@ -447,6 +448,7 @@ function builderToml() {
       const aaChanged = aa.rpsMultiplier !== daa.rpsMultiplier || aa.rpsRecoveryMultiplier !== daa.rpsRecoveryMultiplier ||
         aa.minRPS !== daa.minRPS || aa.errorRateThreshold !== daa.errorRateThreshold ||
         aa.latencyThresholdMs !== daa.latencyThresholdMs || aa.blockedRateThreshold !== daa.blockedRateThreshold ||
+        aa.scoreBoost !== daa.scoreBoost ||
         aa.window !== daa.window || aa.cooldown !== daa.cooldown || aa.duration !== daa.duration;
 
       if (aaChanged) {
@@ -458,6 +460,7 @@ function builderToml() {
         if (aa.errorRateThreshold !== daa.errorRateThreshold) lines.push(`ErrorRateThreshold = ${aa.errorRateThreshold}`);
         if (aa.latencyThresholdMs !== daa.latencyThresholdMs) lines.push(`LatencyThresholdMs = ${aa.latencyThresholdMs}`);
         if (aa.blockedRateThreshold !== daa.blockedRateThreshold) lines.push(`BlockedRateThreshold = ${aa.blockedRateThreshold}`);
+        if (aa.scoreBoost !== daa.scoreBoost) lines.push(`ScoreBoost = ${aa.scoreBoost}`);
         if (aa.window !== daa.window) lines.push(`Window = ${this._q(aa.window)}`);
         if (aa.cooldown !== daa.cooldown) lines.push(`Cooldown = ${this._q(aa.cooldown)}`);
         if (aa.duration !== daa.duration) lines.push(`Duration = ${this._q(aa.duration)}`);

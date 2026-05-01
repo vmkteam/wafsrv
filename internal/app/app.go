@@ -110,12 +110,14 @@ func New(appName string, sl embedlog.Logger, cfg Config) (*App, error) {
 		event.NewTops(30*time.Minute, 10000),
 	)
 
+	// AttackService must exist before WAF wire-up: filter and decide read it via waf.AttackState DI.
+	a.attackSvc = dashboard.NewAttackService()
+
 	if err := a.initWAF(); err != nil {
 		return nil, err
 	}
 
 	a.platformSet = a.buildPlatformSet()
-	a.attackSvc = dashboard.NewAttackService()
 	a.initDecision()
 	a.initAdaptive()
 
@@ -203,7 +205,7 @@ func (a *App) initWAF() error {
 	}
 
 	if a.cfg.TrafficFilter.TrafficFilterEnabled() {
-		a.trafficFilter = filter.New(a.cfg.TrafficFilter.Rules, a.Logger, a.metrics.filterMetrics(a.recorder))
+		a.trafficFilter = filter.New(a.cfg.TrafficFilter.Rules, a.attackSvc, a.Logger, a.metrics.filterMetrics(a.recorder))
 	}
 
 	if a.cfg.Signing.SigningEnabled() {
@@ -361,6 +363,7 @@ func (a *App) initDecision() {
 	a.decisionEngine = decide.New(decide.Config{
 		CaptchaThreshold:     a.cfg.Decision.CaptchaThreshold,
 		BlockThreshold:       a.cfg.Decision.BlockThreshold,
+		AttackScoreBoost:     a.cfg.Adaptive.AutoAttack.ScoreBoost,
 		CaptchaStatusCode:    a.cfg.Decision.CaptchaStatusCode,
 		BlockStatusCode:      a.cfg.Decision.BlockStatusCode,
 		CaptchaToBlock:       a.cfg.Decision.CaptchaToBlock,
@@ -376,7 +379,7 @@ func (a *App) initDecision() {
 			Title:        "Security Check",
 			PrimaryColor: "#4F46E5",
 		},
-	}, a.kvStore, a.captchaCache, verifier, powVerifier, a.alertSender(), a.Logger, a.metrics.decideMetrics(a.recorder, a.platformSet))
+	}, a.kvStore, a.captchaCache, verifier, powVerifier, a.alertSender(), a.attackSvc, a.Logger, a.metrics.decideMetrics(a.recorder, a.platformSet))
 }
 
 // Run starts both data and management servers.

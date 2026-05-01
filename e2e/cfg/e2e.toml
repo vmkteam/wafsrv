@@ -47,6 +47,12 @@ Name = "e2e-log-bot"
 Action = "log"
 UAPrefix = ["E2ELogBot/"]
 
+[[TrafficFilter.Rules]]
+Name = "e2e-attack-only-bot"
+AttackOnly = true
+Action = "block"
+UAPrefix = ["E2EAttackBot/"]
+
 [Signing]
 Enabled = true
 Mode = "detection"

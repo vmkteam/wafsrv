@@ -63,6 +63,7 @@ function builderConfig() {
           autoAttack: {
             rpsMultiplier: 3.0, rpsRecoveryMultiplier: 1.5, minRPS: 10,
             errorRateThreshold: 20, latencyThresholdMs: 500, blockedRateThreshold: 50,
+            scoreBoost: 0,
             window: '1m', cooldown: '5m', duration: '10m',
           },
         },
@@ -96,7 +97,7 @@ function builderConfig() {
 
     defaultTrafficRule() {
       return {
-        name: '', action: 'block',
+        name: '', action: 'block', attackOnly: false,
         uaPrefix: [], uaContains: [], uaExact: [], uaExclude: [],
         country: [], platform: [], version: [],
         ip: [], asn: [], rpcMethod: [],

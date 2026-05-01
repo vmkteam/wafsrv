@@ -139,8 +139,9 @@ type ReputationInfo struct {
 }
 
 type TrafficFilterSection struct {
-	Enabled   bool `json:"enabled"`
-	RuleCount int  `json:"ruleCount"`
+	Enabled         bool `json:"enabled"`
+	RuleCount       int  `json:"ruleCount"`
+	AttackOnlyCount int  `json:"attackOnlyCount"` // rules dormant outside Under Attack Mode
 }
 
 type SigningSection struct {
@@ -197,6 +198,7 @@ type AdaptiveSection struct {
 	ErrorRate      float64 `json:"errorRate"`
 	LatencyMs      float64 `json:"latencyMs"`
 	BlockedRate    float64 `json:"blockedRate"`
+	ScoreBoost     float64 `json:"scoreBoost"` // additive WAFScore bonus during attack mode (Adaptive.AutoAttack.ScoreBoost)
 	Window         string  `json:"window"`
 	Cooldown       string  `json:"cooldown"`
 	Duration       string  `json:"duration"`

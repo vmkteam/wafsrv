@@ -20,6 +20,7 @@ const trafficFilterScore = 5.0
 type TrafficRule struct {
 	Name       string   // rule identifier
 	Action     string   // "block" | "captcha" | "log"
+	AttackOnly bool     // active only when Under Attack Mode is enabled
 	IP         []string // exact IP or CIDR
 	UAExact    []string // exact User-Agent match
 	UAPrefix   []string // User-Agent prefix match
@@ -71,8 +72,9 @@ type RuleMatch struct {
 
 // Metrics holds traffic filter prometheus metrics.
 type Metrics struct {
-	MatchedTotal *prometheus.CounterVec // labels: rule, action
-	Recorder     *event.Recorder
+	MatchedTotal    *prometheus.CounterVec // labels: rule, action
+	AttackOnlyTotal *prometheus.CounterVec // labels: rule — fired AttackOnly rules
+	Recorder        *event.Recorder
 }
 
 // MatchRequest holds extracted request fields for rule matching.
@@ -95,18 +97,23 @@ type TrafficFilter struct {
 	mu           sync.RWMutex
 	staticRules  []TrafficRule
 	dynamicRules []TrafficRule
+	attackState  waf.AttackState
 	embedlog.Logger
 	metrics Metrics
 }
 
-// New creates a new TrafficFilter with static rules from config.
-func New(rules []TrafficRule, sl embedlog.Logger, metrics Metrics) *TrafficFilter {
+// New creates a new TrafficFilter with static rules from config. attackState
+// MUST be non-nil — read on each request that has AttackOnly rules. Pass
+// dashboard.AttackService in production; a stub `IsEnabled() bool { return false }`
+// works in tests.
+func New(rules []TrafficRule, attackState waf.AttackState, sl embedlog.Logger, metrics Metrics) *TrafficFilter {
 	for i := range rules {
 		rules[i].Init()
 	}
 
 	return &TrafficFilter{
 		staticRules: rules,
+		attackState: attackState,
 		Logger:      sl,
 		metrics:     metrics,
 	}
@@ -240,9 +247,28 @@ func (f *TrafficFilter) Middleware() func(http.Handler) http.Handler {
 
 // evalRules evaluates rules, returns true if a block action fired.
 func (f *TrafficFilter) evalRules(r *http.Request, rc *waf.RequestContext, req MatchRequest, rules []TrafficRule) bool {
+	// Lazy: only query attack state if some rule actually needs it. Common
+	// case (no AttackOnly rules) avoids the dashboard.AttackService call entirely.
+	attackChecked, attackOn := false, false
+
 	for _, rule := range rules {
+		if rule.AttackOnly {
+			if !attackChecked {
+				attackOn = f.attackState.IsEnabled()
+				attackChecked = true
+			}
+
+			if !attackOn {
+				continue
+			}
+		}
+
 		if !rule.isActive(req) {
 			continue
+		}
+
+		if rule.AttackOnly && f.metrics.AttackOnlyTotal != nil {
+			f.metrics.AttackOnlyTotal.WithLabelValues(rule.Name).Inc()
 		}
 
 		f.metrics.MatchedTotal.WithLabelValues(rule.Name, rule.Action).Inc()

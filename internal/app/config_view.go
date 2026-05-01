@@ -11,7 +11,7 @@ func BuildConfigResponse(c Config) dashboard.ConfigResponse {
 		WAF:           dashboard.WAFSection{Enabled: c.WAF.WAFEnabled(), Mode: c.WAF.Mode, ParanoiaLevel: c.WAF.ParanoiaLevel},
 		RateLimit:     buildRateLimitSection(c),
 		IP:            buildIPSection(c),
-		TrafficFilter: dashboard.TrafficFilterSection{Enabled: c.TrafficFilter.TrafficFilterEnabled(), RuleCount: len(c.TrafficFilter.Rules)},
+		TrafficFilter: buildTrafficFilterSection(c),
 		Signing:       buildSigningSection(c),
 		Decision:      buildDecisionSection(c),
 		Captcha:       dashboard.CaptchaSection{Provider: c.Captcha.Provider, HasKeys: c.Captcha.SiteKey != "" && c.Captcha.SecretKey != "", CookieName: c.Captcha.CookieName, CookieTTL: c.Captcha.CookieTTL, IPCacheTTL: c.Captcha.IPCacheTTL},
@@ -156,6 +156,21 @@ func buildDecisionSection(c Config) dashboard.DecisionSection {
 	}
 }
 
+func buildTrafficFilterSection(c Config) dashboard.TrafficFilterSection {
+	attackOnly := 0
+	for _, r := range c.TrafficFilter.Rules {
+		if r.AttackOnly {
+			attackOnly++
+		}
+	}
+
+	return dashboard.TrafficFilterSection{
+		Enabled:         c.TrafficFilter.TrafficFilterEnabled(),
+		RuleCount:       len(c.TrafficFilter.Rules),
+		AttackOnlyCount: attackOnly,
+	}
+}
+
 func buildAdaptiveSection(c Config) dashboard.AdaptiveSection {
 	aa := c.Adaptive.AutoAttack
 	return dashboard.AdaptiveSection{
@@ -169,6 +184,7 @@ func buildAdaptiveSection(c Config) dashboard.AdaptiveSection {
 		ErrorRate:      aa.ErrorRateThreshold,
 		LatencyMs:      aa.LatencyThresholdMs,
 		BlockedRate:    aa.BlockedRateThreshold,
+		ScoreBoost:     aa.ScoreBoost,
 		Window:         aa.Window,
 		Cooldown:       aa.Cooldown,
 		Duration:       aa.Duration,

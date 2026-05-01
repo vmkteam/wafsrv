@@ -12,6 +12,7 @@ import (
 	"wafsrv/internal/waf/storage"
 
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/suite"
 	"github.com/vmkteam/embedlog"
 )
@@ -23,6 +24,13 @@ type DecideSuite struct {
 func TestDecide(t *testing.T) {
 	suite.Run(t, new(DecideSuite))
 }
+
+// fakeAttackState is a controllable AttackState for tests.
+type fakeAttackState struct{ on bool }
+
+func (f *fakeAttackState) IsEnabled() bool { return f.on }
+
+func attackOff() waf.AttackState { return &fakeAttackState{on: false} }
 
 func (s *DecideSuite) TestPassBelowThreshold() {
 	e := s.newEngine(5, 8)
@@ -93,7 +101,7 @@ func (s *DecideSuite) TestCaptchaPassCacheBypass() {
 		BlockThreshold:    8,
 		CaptchaStatusCode: 499,
 		BlockStatusCode:   http.StatusForbidden,
-	}, kvStore, cache, nil, nil, nil, embedlog.NewLogger(false, false), testMetrics())
+	}, kvStore, cache, nil, nil, nil, attackOff(), embedlog.NewLogger(false, false), testMetrics())
 
 	handler := e.Middleware()(okHandler())
 
@@ -141,6 +149,80 @@ func (s *DecideSuite) TestZeroThresholdsPass() {
 	s.Equal(http.StatusOK, w.Code, "zero thresholds should pass everything")
 }
 
+func (s *DecideSuite) TestAttackScoreBoost() {
+	cases := []struct {
+		name        string
+		boost       float64
+		attackOn    bool
+		score       float64
+		wantCode    int
+		wantBoosted bool   // rc.AttackBoost should be set on the request
+		wantCross   string // "" or boostResultBlock/Captcha
+	}{
+		{"boost off → pass", 2, false, 3, http.StatusOK, false, ""},
+		{"boost on, lifts to captcha", 2, true, 3, 499, true, boostResultCaptcha},
+		{"boost on, lifts to block", 5, true, 4, http.StatusForbidden, true, boostResultBlock},
+		{"boost zero, on, ignored", 0, true, 3, http.StatusOK, false, ""},
+		{"boost on, score already above block", 2, true, 9, http.StatusForbidden, true, ""},
+	}
+
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			st := &fakeAttackState{on: tc.attackOn}
+			boostMetric := prometheus.NewCounterVec(prometheus.CounterOpts{
+				Name: "test_decide_attack_boost_used_total",
+				Help: "test",
+			}, []string{"result"})
+			metrics := testMetrics()
+			metrics.AttackBoostUsed = boostMetric
+
+			e := New(Config{
+				CaptchaThreshold:     5,
+				BlockThreshold:       8,
+				AttackScoreBoost:     tc.boost,
+				CaptchaStatusCode:    499,
+				BlockStatusCode:      http.StatusForbidden,
+				CaptchaToBlock:       3,
+				CaptchaToBlockWindow: 10 * time.Minute,
+				SoftBlockDuration:    10 * time.Minute,
+			}, storage.NewMemoryKV(100000), nil, nil, nil, nil, st, embedlog.NewLogger(false, false), metrics)
+
+			handler := e.Middleware()(okHandler())
+			w := httptest.NewRecorder()
+			req := s.requestWithScore("9.9.9.9", tc.score)
+			handler.ServeHTTP(w, req)
+
+			s.Equal(tc.wantCode, w.Code)
+
+			rc := waf.FromContext(req.Context())
+			if tc.wantBoosted {
+				s.InDelta(tc.boost, rc.AttackBoost, 0.0001, "rc.AttackBoost should record applied delta")
+			} else {
+				s.Zero(rc.AttackBoost, "rc.AttackBoost must stay 0 when boost not applied")
+			}
+
+			if tc.wantCross != "" {
+				s.InDelta(1.0, decideCounterValue(boostMetric, tc.wantCross), 0.0001,
+					"AttackBoostUsed{result=%q} should fire once", tc.wantCross)
+			}
+		})
+	}
+}
+
+func decideCounterValue(v *prometheus.CounterVec, label string) float64 {
+	c, err := v.GetMetricWithLabelValues(label)
+	if err != nil {
+		return 0
+	}
+
+	m := &dto.Metric{}
+	if err := c.Write(m); err != nil {
+		return 0
+	}
+
+	return m.GetCounter().GetValue()
+}
+
 func (s *DecideSuite) newEngine(captchaThreshold, blockThreshold float64) *Engine {
 	return New(Config{
 		CaptchaThreshold:     captchaThreshold,
@@ -150,7 +232,7 @@ func (s *DecideSuite) newEngine(captchaThreshold, blockThreshold float64) *Engin
 		CaptchaToBlock:       3,
 		CaptchaToBlockWindow: 10 * time.Minute,
 		SoftBlockDuration:    10 * time.Minute,
-	}, storage.NewMemoryKV(100000), nil, nil, nil, nil, embedlog.NewLogger(false, false), testMetrics())
+	}, storage.NewMemoryKV(100000), nil, nil, nil, nil, attackOff(), embedlog.NewLogger(false, false), testMetrics())
 }
 
 func (s *DecideSuite) requestWithScore(ipStr string, score float64) *http.Request {
@@ -187,7 +269,7 @@ func BenchmarkDecidePass(b *testing.B) {
 		CaptchaToBlock:       3,
 		CaptchaToBlockWindow: 10 * time.Minute,
 		SoftBlockDuration:    10 * time.Minute,
-	}, storage.NewMemoryKV(100000), nil, nil, nil, nil, embedlog.NewLogger(false, false), testMetrics())
+	}, storage.NewMemoryKV(100000), nil, nil, nil, nil, attackOff(), embedlog.NewLogger(false, false), testMetrics())
 
 	handler := e.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -225,7 +307,7 @@ func BenchmarkDecidePlatformCheck(b *testing.B) {
 			{Platform: "android", Captcha: true, MinVersion: [3]int{3, 0, 0}, Fallback: waf.ActionPass},
 			{Platform: "widget", Captcha: false, Fallback: waf.ActionPass},
 		},
-	}, storage.NewMemoryKV(100000), nil, nil, nil, nil, embedlog.NewLogger(false, false), testMetrics())
+	}, storage.NewMemoryKV(100000), nil, nil, nil, nil, attackOff(), embedlog.NewLogger(false, false), testMetrics())
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -455,7 +537,7 @@ func (s *DecideSuite) newPlatformEngine() *Engine {
 			{Platform: "ios", Captcha: true, MinVersion: [3]int{2, 5, 0}, Fallback: waf.ActionPass},
 			{Platform: "android", Captcha: true, MinVersion: [3]int{3, 0, 0}, Fallback: waf.ActionPass},
 		},
-	}, storage.NewMemoryKV(100000), nil, nil, nil, nil, embedlog.NewLogger(false, false), testMetrics())
+	}, storage.NewMemoryKV(100000), nil, nil, nil, nil, attackOff(), embedlog.NewLogger(false, false), testMetrics())
 }
 
 func (s *DecideSuite) requestWithPlatformScore(platform, version string) *http.Request {

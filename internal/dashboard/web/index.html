@@ -684,6 +684,7 @@
     <div class="cfg-body">
       <div class="cfg-kv"><span>Enabled</span><span x-text="cfgData.trafficFilter.enabled ? '✓' : '✗'"></span></div>
       <div class="cfg-kv"><span>Static Rules</span><span x-text="cfgData.trafficFilter.ruleCount"></span></div>
+      <div class="cfg-kv" x-show="cfgData.trafficFilter.attackOnlyCount > 0"><span>Attack-Only Rules</span><span x-text="cfgData.trafficFilter.attackOnlyCount + ' (active only during Under Attack Mode)'"></span></div>
     </div>
   </details>
 
@@ -770,6 +771,7 @@
       <div class="cfg-kv"><span>Error Rate</span><span x-text="'>' + cfgData.adaptive.errorRate + '%'"></span></div>
       <div class="cfg-kv"><span>Latency</span><span x-text="'>' + cfgData.adaptive.latencyMs + 'ms'"></span></div>
       <div class="cfg-kv"><span>Blocked Rate</span><span x-text="'>' + cfgData.adaptive.blockedRate + '%'"></span></div>
+      <div class="cfg-kv" x-show="cfgData.adaptive.scoreBoost > 0"><span>Score Boost</span><span x-text="'+' + cfgData.adaptive.scoreBoost + ' to WAFScore during attack'"></span></div>
       <div class="cfg-kv"><span>Window</span><span x-text="cfgData.adaptive.window"></span></div>
       <div class="cfg-kv"><span>Cooldown</span><span x-text="cfgData.adaptive.cooldown"></span></div>
       <div class="cfg-kv"><span>Duration</span><span x-text="cfgData.adaptive.duration"></span></div>

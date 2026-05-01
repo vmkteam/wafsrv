@@ -423,6 +423,10 @@ func accessLogRCAttrs(rc *waf.RequestContext) []slog.Attr {
 		attrs = append(attrs, slog.Float64("wafScore", rc.WAFScore))
 	}
 
+	if rc.AttackBoost > 0 {
+		attrs = append(attrs, slog.Float64("scoreBoost", rc.AttackBoost))
+	}
+
 	if rc.Static {
 		attrs = append(attrs, slog.Bool("static", true))
 	}

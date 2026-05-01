@@ -30,6 +30,8 @@ const (
 	metricAdaptiveTrigger    = "wafsrv_adaptive_trigger_total"
 	metricAdaptiveAttack     = "wafsrv_adaptive_attack_total"
 	metricProxyErrorsTotal   = "wafsrv_proxy_errors_total"
+	metricAttackOnlyMatch    = "wafsrv_attack_only_match_total"
+	metricAttackScoreBoost   = "wafsrv_attack_score_boost_applied_total"
 )
 
 // appMetrics holds all prometheus metrics for the application.
@@ -69,10 +71,14 @@ type appMetrics struct {
 
 	// proxy
 	proxyErrorsTotal *prometheus.CounterVec
+
+	// adaptive captcha expansion
+	attackOnlyTotal      *prometheus.CounterVec
+	attackScoreBoostUsed *prometheus.CounterVec
 }
 
 // newMetrics creates all prometheus metrics and registers them.
-func newMetrics() *appMetrics {
+func newMetrics() *appMetrics { //nolint:funlen // flat constructor, no logic to extract
 	m := &appMetrics{
 		registry: prometheus.NewRegistry(),
 
@@ -146,6 +152,16 @@ func newMetrics() *appMetrics {
 			Name: metricProxyErrorsTotal,
 			Help: "Total proxy errors by target and reason (cb_open / upstream_error / no_backends).",
 		}, []string{"target", "reason"}),
+
+		attackOnlyTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: metricAttackOnlyMatch,
+			Help: "Total fires of AttackOnly traffic-filter rules (Under Attack Mode).",
+		}, []string{"rule"}),
+
+		attackScoreBoostUsed: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: metricAttackScoreBoost,
+			Help: "Total requests where AttackScoreBoost moved the decision (captcha/block) during Under Attack Mode.",
+		}, []string{"result"}),
 	}
 
 	m.registry.MustRegister(
@@ -163,6 +179,8 @@ func newMetrics() *appMetrics {
 		m.adaptiveTrigger,
 		m.adaptiveAttack,
 		m.proxyErrorsTotal,
+		m.attackOnlyTotal,
+		m.attackScoreBoostUsed,
 	)
 
 	return m
@@ -193,8 +211,9 @@ func (m *appMetrics) ipMetrics(rec *event.Recorder) ip.Metrics {
 // filterMetrics returns filter.Metrics populated from appMetrics.
 func (m *appMetrics) filterMetrics(rec *event.Recorder) filter.Metrics {
 	return filter.Metrics{
-		MatchedTotal: m.filterMatchedTotal,
-		Recorder:     rec,
+		MatchedTotal:    m.filterMatchedTotal,
+		AttackOnlyTotal: m.attackOnlyTotal,
+		Recorder:        rec,
 	}
 }
 
@@ -225,9 +244,10 @@ func (m *appMetrics) signMetrics(rec *event.Recorder) sign.Metrics {
 // decideMetrics returns decide.Metrics populated from appMetrics.
 func (m *appMetrics) decideMetrics(rec *event.Recorder, platformSet map[string]struct{}) decide.Metrics {
 	return decide.Metrics{
-		DecisionTotal: m.decisionTotal,
-		Recorder:      rec,
-		PlatformSet:   platformSet,
+		DecisionTotal:   m.decisionTotal,
+		AttackBoostUsed: m.attackScoreBoostUsed,
+		Recorder:        rec,
+		PlatformSet:     platformSet,
 	}
 }
 
