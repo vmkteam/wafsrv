@@ -207,13 +207,19 @@ Listen = "127.0.0.1:8081"
 # === CAPTCHA ===
 
 # [Captcha]
-# Provider = "turnstile"             # "turnstile" (Cloudflare) | "hcaptcha"
+# Provider = "turnstile"             # "turnstile" (Cloudflare) | "hcaptcha" | "pow"
+# Secret = ""                        # REQUIRED when Provider is set.
+#                                    # HMAC key for waf_pass cookie + PoW challenge signature.
+#                                    # Generate: openssl rand -hex 32
+#                                    # MUST be identical on every instance behind the LB,
+#                                    # otherwise cookies issued by one node won't validate on another.
 # SiteKey = ""
 # SecretKey = ""
 
 # hCaptcha test keys (no registration, always passes, no anti-bot protection):
 # [Captcha]
 # Provider = "hcaptcha"
+# Secret = "change-me-generate-via-openssl-rand-hex-32"
 # SiteKey = "10000000-ffff-ffff-ffff-000000000001"
 # SecretKey = "0x0000000000000000000000000000000000000000"
 

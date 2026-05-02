@@ -1154,7 +1154,7 @@ func (ConfigService) SMD() smd.ServiceInfo {
 								},
 								{
 									Name:        "scoreBoost",
-									Description: `additive WAFScore bonus during attack mode (Decision.AttackScoreBoost)`,
+									Description: `additive WAFScore bonus during attack mode (Adaptive.AutoAttack.ScoreBoost)`,
 									Type:        smd.Float,
 								},
 								{

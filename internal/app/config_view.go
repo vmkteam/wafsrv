@@ -14,7 +14,7 @@ func BuildConfigResponse(c Config) dashboard.ConfigResponse {
 		TrafficFilter: buildTrafficFilterSection(c),
 		Signing:       buildSigningSection(c),
 		Decision:      buildDecisionSection(c),
-		Captcha:       dashboard.CaptchaSection{Provider: c.Captcha.Provider, HasKeys: c.Captcha.SiteKey != "" && c.Captcha.SecretKey != "", CookieName: c.Captcha.CookieName, CookieTTL: c.Captcha.CookieTTL, IPCacheTTL: c.Captcha.IPCacheTTL},
+		Captcha:       dashboard.CaptchaSection{Provider: c.Captcha.Provider, HasKeys: c.Captcha.SiteKey != "" && c.Captcha.SecretKey != "", HasSecret: c.Captcha.Secret != "", CookieName: c.Captcha.CookieName, CookieTTL: c.Captcha.CookieTTL, IPCacheTTL: c.Captcha.IPCacheTTL},
 		Alerting:      dashboard.AlertingSection{Enabled: c.Alerting.AlertingEnabled(), WebhookCount: len(c.Alerting.Webhooks)},
 		Adaptive:      buildAdaptiveSection(c),
 		Storage:       dashboard.StorageSection{Backend: c.Storage.Backend, Hosts: len(c.Storage.Aerospike.Hosts), Namespace: c.Storage.Aerospike.Namespace, KeyPrefix: c.Storage.Aerospike.KeyPrefix},

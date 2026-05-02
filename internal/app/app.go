@@ -112,6 +112,7 @@ func New(appName string, sl embedlog.Logger, cfg Config) (*App, error) {
 
 	// AttackService must exist before WAF wire-up: filter and decide read it via waf.AttackState DI.
 	a.attackSvc = dashboard.NewAttackService()
+	a.metrics.registerAttackModeGauge(a.attackSvc.IsEnabled)
 
 	if err := a.initWAF(); err != nil {
 		return nil, err
@@ -300,6 +301,7 @@ func (a *App) initRPCInspector() {
 func (a *App) initDecision() {
 	// captcha cache
 	a.captchaCache = challenge.NewCache(challenge.CacheConfig{
+		Secret:     []byte(a.cfg.Captcha.Secret),
 		CookieName: a.cfg.Captcha.CookieName,
 		CookieTTL:  parseDuration(a.cfg.Captcha.CookieTTL, 30*time.Minute),
 		IPCacheTTL: parseDuration(a.cfg.Captcha.IPCacheTTL, 30*time.Minute),
@@ -369,6 +371,7 @@ func (a *App) initDecision() {
 		CaptchaToBlock:       a.cfg.Decision.CaptchaToBlock,
 		CaptchaToBlockWindow: parseDuration(a.cfg.Decision.CaptchaToBlockWindow, 10*time.Minute),
 		SoftBlockDuration:    parseDuration(a.cfg.Decision.SoftBlockDuration, 10*time.Minute),
+		BlockRetryAfter:      parseDuration(a.cfg.Decision.BlockRetryAfter, 0),
 		CaptchaProvider:      a.cfg.Captcha.Provider,
 		CaptchaSiteKey:       a.cfg.Captcha.SiteKey,
 		CaptchaSecretKey:     a.cfg.Captcha.SecretKey,

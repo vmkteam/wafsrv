@@ -9,6 +9,18 @@ type AttackState interface {
 	IsEnabled() bool
 }
 
+// HeaderAction is the response header that programmatic clients read to tell
+// challenge / block / throttle apart when the HTTP status alone is ambiguous
+// (after captcha migrated from 499 to 403, both captcha and block return 403).
+const HeaderAction = "X-WAF-Action"
+
+// X-WAF-Action header values.
+const (
+	ActionHeaderCaptcha  = "captcha"
+	ActionHeaderBlock    = "block"
+	ActionHeaderThrottle = "throttle"
+)
+
 // Action represents a WAF decision action.
 type Action int
 
@@ -16,7 +28,7 @@ const (
 	ActionPass      Action = iota
 	ActionLog              // detection mode: log but pass
 	ActionThrottle         // 429
-	ActionCaptcha          // 499 — captcha required
+	ActionCaptcha          // 403 — captcha required (X-WAF-Action: captcha)
 	ActionSoftBlock        // 403, temporary (with TTL)
 	ActionHardBlock        // 403, permanent (until manual unblock)
 	ActionBlock            // 403, generic

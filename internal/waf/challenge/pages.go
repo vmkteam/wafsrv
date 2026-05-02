@@ -36,7 +36,7 @@ var providers = map[string]providerWidget{
 	},
 }
 
-// RenderCaptcha writes a captcha challenge page (HTTP 499).
+// RenderCaptcha writes a captcha challenge page (HTTP 403 by default).
 func RenderCaptcha(w http.ResponseWriter, statusCode int, provider, siteKey, cookieName, requestID string, branding Branding) {
 	title := branding.Title
 	if title == "" {
@@ -94,7 +94,7 @@ function onPass(token){
 </html>`, title, color, pw.ScriptURL, title, pw.DivClass, siteKey, requestID, cookieName)
 }
 
-// RenderPowCaptcha writes a PoW challenge page (HTTP 499).
+// RenderPowCaptcha writes a PoW challenge page (HTTP 403 by default).
 func RenderPowCaptcha(w http.ResponseWriter, statusCode int, ch PowChallenge, cookieName, requestID string, timeout time.Duration, branding Branding) {
 	title := branding.Title
 	if title == "" {

@@ -722,7 +722,7 @@
   <div class="section" :class="!cfg.captcha.provider && 'section-off'">
     <div class="section-header">
       <span class="section-title">Captcha</span>
-      <span class="section-summary" x-text="cfg.captcha.provider ? cfg.captcha.provider + (cfg.captcha.provider === 'pow' ? ' built-in' : (cfg.captcha.siteKey ? ' keys=set' : ' keys=empty')) : 'not configured'"></span>
+      <span class="section-summary" x-text="cfg.captcha.provider ? cfg.captcha.provider + (cfg.captcha.secret ? ' secret=set' : ' secret=missing') + (cfg.captcha.provider === 'pow' ? ' built-in' : (cfg.captcha.siteKey ? ' keys=set' : ' keys=empty')) : 'not configured'"></span>
     </div>
     <div class="section-body">
       <p class="section-desc">CAPTCHA provider for the decision engine. Turnstile: free, invisible. hCaptcha: GDPR, 1M/month free. PoW: built-in SHA-256, no API keys, self-hosted. After passing, client gets HMAC cookie (waf_pass). Native apps use IP cache fallback.</p>
@@ -739,6 +739,13 @@
       </div>
 
       <div x-show="cfg.captcha.provider">
+        <!-- HMAC secret: required for every provider (signs waf_pass cookie + PoW challenges) -->
+        <div class="field">
+          <label>Secret <span class="field-note" style="font-weight:normal">(HMAC, ≥32 bytes, identical on every instance)</span></label>
+          <input type="password" x-model="cfg.captcha.secret" placeholder="generate via: openssl rand -hex 32" @input="onChange()">
+          <span class="field-note">Signs waf_pass cookie + PoW challenges. Must match across instances behind the LB.</span>
+        </div>
+
         <!-- SiteKey/SecretKey: only for turnstile/hcaptcha -->
         <div x-show="cfg.captcha.provider !== 'pow'">
           <div class="field"><label>Site Key</label><input type="text" x-model="cfg.captcha.siteKey" placeholder="your-site-key" @input="onChange()"></div>

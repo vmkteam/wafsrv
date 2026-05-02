@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -296,6 +297,20 @@ func (e *BlockEntry) isExpired(now time.Time) bool {
 	return !e.ExpiresAt.IsZero() && now.After(e.ExpiresAt)
 }
 
+// remaining returns time until ExpiresAt; 0 for permanent entries.
+func (e *BlockEntry) remaining(now time.Time) time.Duration {
+	if e.ExpiresAt.IsZero() {
+		return 0
+	}
+
+	d := e.ExpiresAt.Sub(now)
+	if d < 0 {
+		return 0
+	}
+
+	return d
+}
+
 // Legacy methods for backward compatibility.
 
 // AddBlacklist adds an IP to the runtime blacklist (no metadata).
@@ -360,9 +375,12 @@ func (s *Service) Middleware() func(http.Handler) http.Handler {
 				return
 			}
 
-			if s.isBlacklisted(rc.ClientIP) {
+			if blocked, remaining := s.isBlacklisted(rc.ClientIP); blocked {
+				rc.Decision = waf.ActionBlock
 				s.metrics.BlockedTotal.WithLabelValues("blacklist").Inc()
 				s.addEvent(r, rc, "ip_blocked", "blacklist")
+				w.Header().Set(waf.HeaderAction, waf.ActionHeaderBlock)
+				setRetryAfter(w, remaining)
 				http.Error(w, "Forbidden", http.StatusForbidden)
 				return
 			}
@@ -371,8 +389,10 @@ func (s *Service) Middleware() func(http.Handler) http.Handler {
 				s.geo.lookup(rc.ClientIP, info)
 
 				if s.isCountryBlocked(info.Country) {
+					rc.Decision = waf.ActionBlock
 					s.metrics.BlockedTotal.WithLabelValues("country").Inc()
 					s.addEvent(r, rc, "ip_blocked", "country:"+info.Country)
+					w.Header().Set(waf.HeaderAction, waf.ActionHeaderBlock)
 					http.Error(w, "Forbidden", http.StatusForbidden)
 
 					return
@@ -437,11 +457,13 @@ func (s *Service) isWhitelisted(ip netip.Addr) bool {
 	return false
 }
 
-func (s *Service) isBlacklisted(ip netip.Addr) bool {
-	// static config
+// isBlacklisted reports whether ip is blacklisted and the remaining TTL for
+// runtime entries with ExpiresAt set (0 = permanent or static config).
+func (s *Service) isBlacklisted(ip netip.Addr) (bool, time.Duration) {
+	// static config — permanent
 	for _, p := range s.cfg.Blacklist {
 		if p.Contains(ip) {
-			return true
+			return true, 0
 		}
 	}
 
@@ -453,17 +475,31 @@ func (s *Service) isBlacklisted(ip netip.Addr) bool {
 
 	// runtime IPs
 	if e, ok := s.blockedIPs[ip]; ok && !e.isExpired(now) {
-		return true
+		return true, e.remaining(now)
 	}
 
 	// runtime CIDRs
 	for prefix, e := range s.blockedCIDRs {
 		if prefix.Contains(ip) && !e.isExpired(now) {
-			return true
+			return true, e.remaining(now)
 		}
 	}
 
-	return false
+	return false, 0
+}
+
+// setRetryAfter writes Retry-After header in whole seconds when d > 0.
+func setRetryAfter(w http.ResponseWriter, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+
+	secs := int(d.Round(time.Second) / time.Second)
+	if secs < 1 {
+		secs = 1
+	}
+
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
 }
 
 func (s *Service) addEvent(r *http.Request, rc *waf.RequestContext, eventType, detail string) {
@@ -530,8 +566,10 @@ func (s *Service) checkReputation(w http.ResponseWriter, r *http.Request, rc *wa
 
 		switch result.Action {
 		case FeedActionBlock:
+			rc.Decision = waf.ActionBlock
 			s.metrics.BlockedTotal.WithLabelValues("reputation").Inc()
 			s.addEvent(r, rc, "ip_blocked", "reputation:"+strings.Join(result.Feeds, ","))
+			w.Header().Set(waf.HeaderAction, waf.ActionHeaderBlock)
 			http.Error(w, "Forbidden", http.StatusForbidden)
 
 			return true

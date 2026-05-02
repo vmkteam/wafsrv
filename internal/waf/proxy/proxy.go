@@ -199,7 +199,9 @@ func (p *Proxy) HandlerWithLatency(lr LatencyRecorder) http.Handler {
 			}
 
 			if p.errRecorder != nil {
-				p.errRecorder.RecordProxyError("", ErrorReasonNoBackends)
+				// "-" placeholder: no specific backend (pool empty); avoids
+				// the empty-string label rendering as "no data" in Grafana.
+				p.errRecorder.RecordProxyError("-", ErrorReasonNoBackends)
 			}
 
 			http.Error(w, "no backends available", http.StatusServiceUnavailable)

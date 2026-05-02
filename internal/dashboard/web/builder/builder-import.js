@@ -338,6 +338,7 @@ function builderImport() {
       // Captcha
       if (t.Captcha) {
         if (t.Captcha.Provider) cfg.captcha.provider = t.Captcha.Provider;
+        if (t.Captcha.Secret) cfg.captcha.secret = t.Captcha.Secret;
         if (t.Captcha.SiteKey) cfg.captcha.siteKey = t.Captcha.SiteKey;
         if (t.Captcha.SecretKey) cfg.captcha.secretKey = t.Captcha.SecretKey;
         if (t.Captcha.CookieName) cfg.captcha.cookieName = t.Captcha.CookieName;

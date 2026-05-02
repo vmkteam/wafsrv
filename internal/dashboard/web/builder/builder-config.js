@@ -50,12 +50,12 @@ function builderConfig() {
         },
         decision: {
           captchaThreshold: 5, blockThreshold: 8,
-          captchaStatusCode: 499, blockStatusCode: 403,
+          captchaStatusCode: 403, blockStatusCode: 403,
           captchaToBlock: 3, captchaToBlockWindow: '10m',
           softBlockDuration: '10m', captchaFallback: 'block',
           platforms: [],
         },
-        captcha: {provider: '', siteKey: '', secretKey: '', cookieName: 'waf_pass', cookieTTL: '30m', ipCacheTTL: '30m',
+        captcha: {provider: '', secret: '', siteKey: '', secretKey: '', cookieName: 'waf_pass', cookieTTL: '30m', ipCacheTTL: '30m',
           pow: {difficulty: 50000, attackDifficulty: 500000, timeout: '10s', saltTTL: '5m'}},
         alerting: {enabled: false, webhooks: []},
         adaptive: {

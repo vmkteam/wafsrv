@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
@@ -129,11 +130,12 @@ func (c *TrafficFilterConfig) TrafficFilterEnabled() bool {
 type DecisionConfig struct {
 	CaptchaThreshold     float64 // default 5
 	BlockThreshold       float64 // default 8
-	CaptchaStatusCode    int     // default 499
+	CaptchaStatusCode    int     // default 403
 	BlockStatusCode      int     // default 403
 	CaptchaToBlock       int     // default 3
 	CaptchaToBlockWindow string  // default "10m"
 	SoftBlockDuration    string  // default "10m"
+	BlockRetryAfter      string  // duration, default "" = no Retry-After header on block responses
 	CaptchaFallback      string  // default "block"; "pass" | "block" | "log"
 	Platforms            []PlatformCaptchaConfig
 }
@@ -148,7 +150,12 @@ type PlatformCaptchaConfig struct {
 
 // CaptchaConfig configures the CAPTCHA provider.
 type CaptchaConfig struct {
-	Provider     string // "turnstile" | "hcaptcha" | "pow"
+	Provider string // "turnstile" | "hcaptcha" | "pow"
+	// Secret is the HMAC key used to sign waf_pass cookies and PoW challenges.
+	// Required when Provider != "". MUST be identical on every instance behind
+	// a load balancer, otherwise cookies issued by one instance won't validate
+	// on another. Generate via `openssl rand -hex 32` (>= 32 bytes).
+	Secret       string
 	SiteKey      string
 	SecretKey    string
 	CookieName   string // default "waf_pass"
@@ -210,6 +217,7 @@ type RateLimitConfig struct {
 	PerIP       string             // "100/min"
 	Action      string             // "block" | "throttle"
 	MaxCounters int                // LRU eviction
+	RetryAfter  string             // duration, default "60s"; sent as Retry-After on 429
 	Rules       []RateLimitRule    // RPC method matching
 	URLRules    []URLRateLimitRule // HTTP path/method/host matching
 }
@@ -501,6 +509,8 @@ func (c *Config) Validate() error {
 		{c.Captcha.IPCacheTTL, "Captcha.IPCacheTTL"},
 		{c.Decision.CaptchaToBlockWindow, "Decision.CaptchaToBlockWindow"},
 		{c.Decision.SoftBlockDuration, "Decision.SoftBlockDuration"},
+		{c.Decision.BlockRetryAfter, "Decision.BlockRetryAfter"},
+		{c.RateLimit.RetryAfter, "RateLimit.RetryAfter"},
 		{c.IP.Reputation.UpdateInterval, "IP.Reputation.UpdateInterval"},
 	}
 
@@ -528,7 +538,18 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	c.warnMultiInstance()
+
 	return nil
+}
+
+// warnMultiInstance flags the in-memory storage backend as a multi-instance hazard.
+func (c *Config) warnMultiInstance() {
+	if c.Captcha.Provider != "" && c.Storage.Backend == StorageMemory {
+		slog.Default().Warn("captcha enabled with memory storage backend",
+			"impact", "IP fallback, escalation counters and signing nonces won't be shared between instances",
+			"fix", `set Storage.Backend = "aerospike" for multi-instance deployments`)
+	}
 }
 
 // adaptiveBoostValidate ensures Adaptive.AutoAttack.ScoreBoost cannot push
@@ -584,9 +605,21 @@ func (c *RateLimitConfig) validate() error {
 
 var validCaptchaProviders = map[string]bool{"turnstile": true, "hcaptcha": true, "pow": true, "": true}
 
+const minCaptchaSecretBytes = 32
+
 func (c *CaptchaConfig) validate() error {
 	if !validCaptchaProviders[c.Provider] {
 		return fmt.Errorf("config: Captcha.Provider must be turnstile, hcaptcha or pow, got %q", c.Provider)
+	}
+
+	if c.Provider != "" && c.Secret == "" {
+		return errors.New("config: Captcha.Secret is required when Captcha.Provider is set " +
+			"(generate via `openssl rand -hex 32`, must be identical on all instances behind a load balancer)")
+	}
+
+	if c.Provider != "" && len(c.Secret) < minCaptchaSecretBytes {
+		return fmt.Errorf("config: Captcha.Secret must be at least %d bytes long (got %d)",
+			minCaptchaSecretBytes, len(c.Secret))
 	}
 
 	if err := validateDuration(c.PoW.Timeout, "Captcha.PoW.Timeout"); err != nil {
@@ -779,6 +812,7 @@ func (c *Config) LimiterConfig() (limit.Config, error) {
 		PerIP:       perIP,
 		Action:      c.RateLimit.Action,
 		MaxCounters: c.RateLimit.MaxCounters,
+		RetryAfter:  parseDuration(c.RateLimit.RetryAfter, 60*time.Second),
 		Rules:       rules,
 		URLRules:    urlRules,
 	}, nil
@@ -1030,6 +1064,10 @@ func applyWAFDefaults(c *Config) {
 		c.RateLimit.MaxCounters = 100000
 	}
 
+	if c.RateLimit.RetryAfter == "" {
+		c.RateLimit.RetryAfter = "60s"
+	}
+
 	if c.IP.Whitelist.BotVerify.CacheSize == 0 {
 		c.IP.Whitelist.BotVerify.CacheSize = 10000
 	}
@@ -1075,7 +1113,7 @@ func applyDecisionDefaults(c *Config) {
 	}
 
 	if c.Decision.CaptchaStatusCode == 0 {
-		c.Decision.CaptchaStatusCode = 499
+		c.Decision.CaptchaStatusCode = http.StatusForbidden
 	}
 
 	if c.Decision.BlockStatusCode == 0 {

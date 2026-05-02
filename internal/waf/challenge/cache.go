@@ -31,6 +31,8 @@ type CacheConfig struct {
 
 // NewCache creates a new captcha pass cache.
 func NewCache(cfg CacheConfig, store storage.KVStore) *Cache {
+	// Production: unreachable — app/config.go enforces Captcha.Secret when
+	// Provider != "". Kept for tests and embedded usage that bypass TOML config.
 	if len(cfg.Secret) == 0 {
 		cfg.Secret = []byte("wafsrv-default-secret-change-me")
 	}

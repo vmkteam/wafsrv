@@ -22,7 +22,7 @@ Designed to run as a Docker sidecar in front of your backend service (behind Ngi
 - Search engine bot verification (Google, Bing, Yandex, Apple, DuckDuckGo) via reverse DNS + IP ranges
 - Traffic filter rules (User-Agent, IP, country, platform, ASN, RPC method — AND semantics)
 - Request signing (HMAC-SHA256) — anti-replay, anti-tampering
-- Decision engine: cumulative score -> pass / CAPTCHA (499) / block (403)
+- Decision engine: cumulative score -> pass / CAPTCHA (403, `X-WAF-Action: captcha`) / block (403, `X-WAF-Action: block`); throttle (429, `X-WAF-Action: throttle`) for rate-limit
 - CAPTCHA challenge pages: [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/), [hCaptcha](https://www.hcaptcha.com/), or built-in Proof-of-Work (SHA-256)
 - Per-platform CAPTCHA policy with version gating and fallback actions
 - Captcha pass cache: HMAC cookie + IP fallback

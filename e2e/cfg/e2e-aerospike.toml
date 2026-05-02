@@ -47,6 +47,11 @@ Name = "e2e-log-bot"
 Action = "log"
 UAPrefix = ["E2ELogBot/"]
 
+[[TrafficFilter.Rules]]
+Name = "e2e-captcha-bot"
+Action = "captcha"
+UAPrefix = ["E2ECaptchaBot/", "E2ECaptchaBody/", "E2ECaptchaMetrics/", "E2ECapEsc/"]
+
 [Signing]
 Enabled = true
 Mode = "detection"

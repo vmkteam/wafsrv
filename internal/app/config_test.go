@@ -288,6 +288,65 @@ func (s *ConfigSuite) TestInvalidTOML() {
 	s.Error(err, "should fail on invalid TOML")
 }
 
+func (s *ConfigSuite) TestCaptchaSecretNotRequiredWhenDisabled() {
+	path := s.writeConfig(`
+[Proxy]
+Targets = ["http://localhost:3000"]
+ServiceName = "test-svc"
+`)
+
+	_, err := LoadConfig(path)
+	s.Require().NoError(err, "captcha disabled (Provider == \"\") must not require Secret")
+}
+
+func (s *ConfigSuite) TestCaptchaSecretRequiredWhenProviderSet() {
+	path := s.writeConfig(`
+[Proxy]
+Targets = ["http://localhost:3000"]
+ServiceName = "test-svc"
+
+[Captcha]
+Provider = "pow"
+`)
+
+	_, err := LoadConfig(path)
+	s.Require().Error(err, "Captcha.Provider set without Secret must fail")
+	s.Contains(err.Error(), "Captcha.Secret is required")
+}
+
+func (s *ConfigSuite) TestCaptchaSecretTooShort() {
+	path := s.writeConfig(`
+[Proxy]
+Targets = ["http://localhost:3000"]
+ServiceName = "test-svc"
+
+[Captcha]
+Provider = "turnstile"
+Secret = "short"
+`)
+
+	_, err := LoadConfig(path)
+	s.Require().Error(err, "secret shorter than 32 bytes must fail")
+	s.Contains(err.Error(), "at least 32 bytes")
+}
+
+func (s *ConfigSuite) TestCaptchaSecretValid() {
+	path := s.writeConfig(`
+[Proxy]
+Targets = ["http://localhost:3000"]
+ServiceName = "test-svc"
+
+[Captcha]
+Provider = "pow"
+Secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+`)
+
+	cfg, err := LoadConfig(path)
+	s.Require().NoError(err, "valid 64-hex secret with provider must pass validation")
+	s.Equal("pow", cfg.Captcha.Provider)
+	s.Len(cfg.Captcha.Secret, 64)
+}
+
 func (s *ConfigSuite) writeConfig(content string) string {
 	dir := s.T().TempDir()
 	path := filepath.Join(dir, "test.toml")
