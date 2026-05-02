@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
@@ -149,7 +150,12 @@ type PlatformCaptchaConfig struct {
 
 // CaptchaConfig configures the CAPTCHA provider.
 type CaptchaConfig struct {
-	Provider     string // "turnstile" | "hcaptcha" | "pow"
+	Provider string // "turnstile" | "hcaptcha" | "pow"
+	// Secret is the HMAC key used to sign waf_pass cookies and PoW challenges.
+	// Required when Provider != "". MUST be identical on every instance behind
+	// a load balancer, otherwise cookies issued by one instance won't validate
+	// on another. Generate via `openssl rand -hex 32` (>= 32 bytes).
+	Secret       string
 	SiteKey      string
 	SecretKey    string
 	CookieName   string // default "waf_pass"
@@ -532,7 +538,18 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	c.warnMultiInstance()
+
 	return nil
+}
+
+// warnMultiInstance flags the in-memory storage backend as a multi-instance hazard.
+func (c *Config) warnMultiInstance() {
+	if c.Captcha.Provider != "" && c.Storage.Backend == StorageMemory {
+		slog.Default().Warn("captcha enabled with memory storage backend",
+			"impact", "IP fallback, escalation counters and signing nonces won't be shared between instances",
+			"fix", `set Storage.Backend = "aerospike" for multi-instance deployments`)
+	}
 }
 
 // adaptiveBoostValidate ensures Adaptive.AutoAttack.ScoreBoost cannot push
@@ -588,9 +605,21 @@ func (c *RateLimitConfig) validate() error {
 
 var validCaptchaProviders = map[string]bool{"turnstile": true, "hcaptcha": true, "pow": true, "": true}
 
+const minCaptchaSecretBytes = 32
+
 func (c *CaptchaConfig) validate() error {
 	if !validCaptchaProviders[c.Provider] {
 		return fmt.Errorf("config: Captcha.Provider must be turnstile, hcaptcha or pow, got %q", c.Provider)
+	}
+
+	if c.Provider != "" && c.Secret == "" {
+		return errors.New("config: Captcha.Secret is required when Captcha.Provider is set " +
+			"(generate via `openssl rand -hex 32`, must be identical on all instances behind a load balancer)")
+	}
+
+	if c.Provider != "" && len(c.Secret) < minCaptchaSecretBytes {
+		return fmt.Errorf("config: Captcha.Secret must be at least %d bytes long (got %d)",
+			minCaptchaSecretBytes, len(c.Secret))
 	}
 
 	if err := validateDuration(c.PoW.Timeout, "Captcha.PoW.Timeout"); err != nil {

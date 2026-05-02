@@ -55,7 +55,7 @@ function builderConfig() {
           softBlockDuration: '10m', captchaFallback: 'block',
           platforms: [],
         },
-        captcha: {provider: '', siteKey: '', secretKey: '', cookieName: 'waf_pass', cookieTTL: '30m', ipCacheTTL: '30m',
+        captcha: {provider: '', secret: '', siteKey: '', secretKey: '', cookieName: 'waf_pass', cookieTTL: '30m', ipCacheTTL: '30m',
           pow: {difficulty: 50000, attackDifficulty: 500000, timeout: '10s', saltTTL: '5m'}},
         alerting: {enabled: false, webhooks: []},
         adaptive: {

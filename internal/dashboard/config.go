@@ -177,6 +177,7 @@ type PlatformCaptchaInfo struct {
 type CaptchaSection struct {
 	Provider   string `json:"provider,omitempty"`
 	HasKeys    bool   `json:"hasKeys"`
+	HasSecret  bool   `json:"hasSecret"`
 	CookieName string `json:"cookieName"`
 	CookieTTL  string `json:"cookieTtl"`
 	IPCacheTTL string `json:"ipCacheTtl"`

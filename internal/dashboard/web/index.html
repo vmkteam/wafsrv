@@ -742,10 +742,11 @@
   </details>
 
   <details class="cfg-section">
-    <summary><span class="cfg-title">Captcha</span> <span class="cfg-summary" x-text="cfgData.captcha.provider ? cfgData.captcha.provider + '  keys=' + (cfgData.captcha.hasKeys ? '✓' : '✗') + '  cookie=' + cfgData.captcha.cookieTtl : 'not configured'"></span></summary>
+    <summary><span class="cfg-title">Captcha</span> <span class="cfg-summary" x-text="cfgData.captcha.provider ? cfgData.captcha.provider + '  secret=' + (cfgData.captcha.hasSecret ? '✓' : '✗') + '  keys=' + (cfgData.captcha.hasKeys ? '✓' : '✗') + '  cookie=' + cfgData.captcha.cookieTtl : 'not configured'"></span></summary>
     <div class="cfg-body">
       <div class="cfg-kv"><span>Provider</span><span x-text="cfgData.captcha.provider || '—'"></span></div>
-      <div class="cfg-kv"><span>Keys Configured</span><span x-text="cfgData.captcha.hasKeys ? '✓' : '✗'"></span></div>
+      <div class="cfg-kv"><span>HMAC Secret</span><span x-text="cfgData.captcha.hasSecret ? '✓ set' : '✗ missing'"></span></div>
+      <div class="cfg-kv"><span>Provider Keys</span><span x-text="cfgData.captcha.hasKeys ? '✓' : '✗'"></span></div>
       <div class="cfg-kv"><span>Cookie Name</span><span x-text="cfgData.captcha.cookieName"></span></div>
       <div class="cfg-kv"><span>Cookie TTL</span><span x-text="cfgData.captcha.cookieTtl"></span></div>
       <div class="cfg-kv"><span>IP Cache TTL</span><span x-text="cfgData.captcha.ipCacheTtl"></span></div>

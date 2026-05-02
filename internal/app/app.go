@@ -301,6 +301,7 @@ func (a *App) initRPCInspector() {
 func (a *App) initDecision() {
 	// captcha cache
 	a.captchaCache = challenge.NewCache(challenge.CacheConfig{
+		Secret:     []byte(a.cfg.Captcha.Secret),
 		CookieName: a.cfg.Captcha.CookieName,
 		CookieTTL:  parseDuration(a.cfg.Captcha.CookieTTL, 30*time.Minute),
 		IPCacheTTL: parseDuration(a.cfg.Captcha.IPCacheTTL, 30*time.Minute),

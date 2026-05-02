@@ -384,6 +384,10 @@ function builderToml() {
       lines.push('');
       lines.push('[Captcha]');
       lines.push(`Provider = ${this._q(c.captcha.provider)}`);
+      // HMAC secret for waf_pass cookie + PoW signing — required for any provider
+      if (c.captcha.secret) {
+        lines.push(`Secret = ${this._q(c.captcha.secret)}`);
+      }
       // SiteKey/SecretKey only for turnstile/hcaptcha
       if (c.captcha.provider !== 'pow') {
         if (c.captcha.siteKey) lines.push(`SiteKey = ${this._q(c.captcha.siteKey)}`);
