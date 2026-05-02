@@ -106,11 +106,11 @@
       <div class="card-label">WAF Matches</div>
       <div class="card-sub">Detection</div>
     </div>
-    <div class="card" title="Captcha challenges shown (499) — score exceeded CaptchaThreshold">
+    <div class="card" title="Captcha challenges shown (X-WAF-Action: captcha) — score exceeded CaptchaThreshold">
       <div class="card-value" x-text="fmtNum(captchaCount)">—</div>
       <div class="sparkline"><template x-for="v in spark('captcha')"><div class="spark-bar spark-blue" :style="'height:'+v+'%'"></div></template></div>
       <div class="card-label">CAPTCHA</div>
-      <div class="card-sub">499</div>
+      <div class="card-sub">X-WAF-Action: captcha</div>
     </div>
     <div class="card" x-show="captchaPassed > 0" title="Captcha solve rate (passed / shown)">
       <div class="card-value" x-text="fmtNum(captchaPassed)">—</div>

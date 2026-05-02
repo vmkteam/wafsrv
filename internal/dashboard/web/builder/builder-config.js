@@ -50,7 +50,7 @@ function builderConfig() {
         },
         decision: {
           captchaThreshold: 5, blockThreshold: 8,
-          captchaStatusCode: 499, blockStatusCode: 403,
+          captchaStatusCode: 403, blockStatusCode: 403,
           captchaToBlock: 3, captchaToBlockWindow: '10m',
           softBlockDuration: '10m', captchaFallback: 'block',
           platforms: [],

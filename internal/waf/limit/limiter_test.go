@@ -59,6 +59,7 @@ func (s *LimiterSuite) TestPerIPLimit() {
 		PerIP:       Rate{Count: 3, Duration: time.Minute},
 		Action:      "block",
 		MaxCounters: 1000,
+		RetryAfter:  45 * time.Second,
 	})
 
 	handler := l.Middleware()(okHandler())
@@ -72,7 +73,28 @@ func (s *LimiterSuite) TestPerIPLimit() {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, s.requestWithIP("1.2.3.4"))
 	s.Equal(http.StatusTooManyRequests, w.Code, "4th request should be limited")
-	s.NotEmpty(w.Header().Get("Retry-After"))
+	s.Equal(waf.ActionHeaderThrottle, w.Header().Get(waf.HeaderAction), "throttle must set X-WAF-Action: throttle")
+	s.Equal("45", w.Header().Get("Retry-After"), "Retry-After must come from cfg.RetryAfter, not hardcoded")
+}
+
+func (s *LimiterSuite) TestRetryAfterOmittedWhenZero() {
+	l := s.newLimiter(Config{
+		PerIP:       Rate{Count: 1, Duration: time.Minute},
+		Action:      "block",
+		MaxCounters: 1000,
+	})
+
+	handler := l.Middleware()(okHandler())
+
+	// burn the only token, then trip the limit
+	w1 := httptest.NewRecorder()
+	handler.ServeHTTP(w1, s.requestWithIP("9.9.9.9"))
+	s.Equal(http.StatusOK, w1.Code)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, s.requestWithIP("9.9.9.9"))
+	s.Equal(http.StatusTooManyRequests, w.Code)
+	s.Empty(w.Header().Get("Retry-After"), "Retry-After must be omitted when RetryAfter=0")
 }
 
 func (s *LimiterSuite) TestDifferentIPsIndependent() {

@@ -49,7 +49,9 @@ func (s *DecideSuite) TestCaptchaAtThreshold() {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, s.requestWithScore("1.1.1.1", 5))
 
-	s.Equal(499, w.Code, "score at captcha threshold should return 499")
+	s.Equal(http.StatusForbidden, w.Code, "score at captcha threshold should return 403")
+	s.Equal(waf.ActionHeaderCaptcha, w.Header().Get(waf.HeaderAction), "captcha must set X-WAF-Action: captcha")
+	s.Empty(w.Header().Get("Retry-After"), "captcha must NOT set Retry-After (semantics: solve, not wait)")
 	s.Contains(w.Body.String(), "Captcha required")
 }
 
@@ -61,7 +63,33 @@ func (s *DecideSuite) TestBlockAtThreshold() {
 	handler.ServeHTTP(w, s.requestWithScore("1.1.1.1", 10))
 
 	s.Equal(http.StatusForbidden, w.Code, "score at block threshold should return 403")
+	s.Equal(waf.ActionHeaderBlock, w.Header().Get(waf.HeaderAction), "block must set X-WAF-Action: block")
 	s.Contains(w.Body.String(), "Access Denied")
+}
+
+func (s *DecideSuite) TestBlockRetryAfter() {
+	e := s.newEngine(5, 8)
+	e.cfg.BlockRetryAfter = 30 * time.Second
+
+	handler := e.Middleware()(okHandler())
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, s.requestWithScore("1.1.1.1", 10))
+
+	s.Equal(http.StatusForbidden, w.Code)
+	s.Equal("30", w.Header().Get("Retry-After"), "block should expose configured Retry-After in seconds")
+}
+
+func (s *DecideSuite) TestCaptchaNoRetryAfterEvenIfBlockSet() {
+	e := s.newEngine(5, 8)
+	e.cfg.BlockRetryAfter = 30 * time.Second
+
+	handler := e.Middleware()(okHandler())
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, s.requestWithScore("1.1.1.1", 5))
+
+	s.Equal(http.StatusForbidden, w.Code)
+	s.Equal(waf.ActionHeaderCaptcha, w.Header().Get(waf.HeaderAction))
+	s.Empty(w.Header().Get("Retry-After"), "BlockRetryAfter must not bleed into captcha responses")
 }
 
 func (s *DecideSuite) TestWhitelistedBypass() {
@@ -99,7 +127,7 @@ func (s *DecideSuite) TestCaptchaPassCacheBypass() {
 	e := New(Config{
 		CaptchaThreshold:  5,
 		BlockThreshold:    8,
-		CaptchaStatusCode: 499,
+		CaptchaStatusCode: http.StatusForbidden,
 		BlockStatusCode:   http.StatusForbidden,
 	}, kvStore, cache, nil, nil, nil, attackOff(), embedlog.NewLogger(false, false), testMetrics())
 
@@ -130,13 +158,16 @@ func (s *DecideSuite) TestEscalationToSoftBlock() {
 	for range 2 {
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, s.requestWithScore("3.3.3.3", 6))
-		s.Equal(499, w.Code)
+		s.Equal(http.StatusForbidden, w.Code)
+		s.Equal(waf.ActionHeaderCaptcha, w.Header().Get(waf.HeaderAction))
 	}
 
 	// next request should be soft-blocked
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, s.requestWithScore("3.3.3.3", 0)) // even score 0
 	s.Equal(http.StatusForbidden, w.Code, "should be soft-blocked after escalation")
+	s.Equal(waf.ActionHeaderBlock, w.Header().Get(waf.HeaderAction), "soft block must set X-WAF-Action: block")
+	s.NotEmpty(w.Header().Get("Retry-After"), "soft block should expose remaining TTL")
 }
 
 func (s *DecideSuite) TestZeroThresholdsPass() {
@@ -160,7 +191,7 @@ func (s *DecideSuite) TestAttackScoreBoost() {
 		wantCross   string // "" or boostResultBlock/Captcha
 	}{
 		{"boost off → pass", 2, false, 3, http.StatusOK, false, ""},
-		{"boost on, lifts to captcha", 2, true, 3, 499, true, boostResultCaptcha},
+		{"boost on, lifts to captcha", 2, true, 3, http.StatusForbidden, true, boostResultCaptcha},
 		{"boost on, lifts to block", 5, true, 4, http.StatusForbidden, true, boostResultBlock},
 		{"boost zero, on, ignored", 0, true, 3, http.StatusOK, false, ""},
 		{"boost on, score already above block", 2, true, 9, http.StatusForbidden, true, ""},
@@ -180,7 +211,7 @@ func (s *DecideSuite) TestAttackScoreBoost() {
 				CaptchaThreshold:     5,
 				BlockThreshold:       8,
 				AttackScoreBoost:     tc.boost,
-				CaptchaStatusCode:    499,
+				CaptchaStatusCode:    http.StatusForbidden,
 				BlockStatusCode:      http.StatusForbidden,
 				CaptchaToBlock:       3,
 				CaptchaToBlockWindow: 10 * time.Minute,
@@ -227,7 +258,7 @@ func (s *DecideSuite) newEngine(captchaThreshold, blockThreshold float64) *Engin
 	return New(Config{
 		CaptchaThreshold:     captchaThreshold,
 		BlockThreshold:       blockThreshold,
-		CaptchaStatusCode:    499,
+		CaptchaStatusCode:    http.StatusForbidden,
 		BlockStatusCode:      http.StatusForbidden,
 		CaptchaToBlock:       3,
 		CaptchaToBlockWindow: 10 * time.Minute,
@@ -264,7 +295,7 @@ func BenchmarkDecidePass(b *testing.B) {
 	e := New(Config{
 		CaptchaThreshold:     5,
 		BlockThreshold:       8,
-		CaptchaStatusCode:    499,
+		CaptchaStatusCode:    http.StatusForbidden,
 		BlockStatusCode:      http.StatusForbidden,
 		CaptchaToBlock:       3,
 		CaptchaToBlockWindow: 10 * time.Minute,
@@ -295,7 +326,7 @@ func BenchmarkDecidePlatformCheck(b *testing.B) {
 	e := New(Config{
 		CaptchaThreshold:     5,
 		BlockThreshold:       8,
-		CaptchaStatusCode:    499,
+		CaptchaStatusCode:    http.StatusForbidden,
 		BlockStatusCode:      http.StatusForbidden,
 		CaptchaToBlock:       3,
 		CaptchaToBlockWindow: 10 * time.Minute,
@@ -431,7 +462,8 @@ func (s *DecideSuite) TestCaptchaRenderedForSupportedPlatform() {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, s.requestWithPlatformScore("web", ""))
 
-	s.Equal(499, w.Code, "web platform should get captcha")
+	s.Equal(http.StatusForbidden, w.Code, "web platform should get captcha")
+	s.Equal(waf.ActionHeaderCaptcha, w.Header().Get(waf.HeaderAction))
 	s.Contains(w.Body.String(), "Captcha required")
 }
 
@@ -442,7 +474,8 @@ func (s *DecideSuite) TestCaptchaRenderedForVersionedPlatform() {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, s.requestWithPlatformScore("ios", "3.0.0"))
 
-	s.Equal(499, w.Code, "iOS 3.0.0 should get captcha")
+	s.Equal(http.StatusForbidden, w.Code, "iOS 3.0.0 should get captcha")
+	s.Equal(waf.ActionHeaderCaptcha, w.Header().Get(waf.HeaderAction))
 }
 
 func (s *DecideSuite) TestEmptyPlatformGetsCaptcha() {
@@ -452,7 +485,8 @@ func (s *DecideSuite) TestEmptyPlatformGetsCaptcha() {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, s.requestWithPlatformScore("", ""))
 
-	s.Equal(499, w.Code, "empty platform (browser/SSR) should get captcha")
+	s.Equal(http.StatusForbidden, w.Code, "empty platform (browser/SSR) should get captcha")
+	s.Equal(waf.ActionHeaderCaptcha, w.Header().Get(waf.HeaderAction))
 	s.Contains(w.Body.String(), "Captcha required")
 }
 
@@ -470,7 +504,8 @@ func (s *DecideSuite) TestEscalationCompositeKey() {
 	for range 2 {
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, s.requestWithDiscriminator("1.1.1.1", 6, "bot:aaa"))
-		s.Equal(499, w.Code)
+		s.Equal(http.StatusForbidden, w.Code)
+		s.Equal(waf.ActionHeaderCaptcha, w.Header().Get(waf.HeaderAction))
 	}
 
 	// Bot should be soft-blocked
@@ -495,7 +530,8 @@ func (s *DecideSuite) TestSoftBlockPerDiscriminator() {
 	// Trigger soft block for discriminator A
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, s.requestWithDiscriminator("2.2.2.2", 6, "iOS:aaa"))
-	s.Equal(499, w.Code)
+	s.Equal(http.StatusForbidden, w.Code)
+	s.Equal(waf.ActionHeaderCaptcha, w.Header().Get(waf.HeaderAction))
 
 	// A is now soft-blocked
 	w = httptest.NewRecorder()
@@ -523,7 +559,7 @@ func (s *DecideSuite) newPlatformEngine() *Engine {
 	return New(Config{
 		CaptchaThreshold:     5,
 		BlockThreshold:       8,
-		CaptchaStatusCode:    499,
+		CaptchaStatusCode:    http.StatusForbidden,
 		BlockStatusCode:      http.StatusForbidden,
 		CaptchaToBlock:       3,
 		CaptchaToBlockWindow: 10 * time.Minute,

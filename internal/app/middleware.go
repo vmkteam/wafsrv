@@ -113,8 +113,7 @@ func recordAccessTops(recorder *event.Recorder, r *http.Request, rec *statusReco
 		country = rc.IP.Country
 	}
 
-	isBlocked := rec.status == http.StatusForbidden || rec.status == http.StatusTooManyRequests || rec.status == 499
-	recorder.RecordTops(rc.ClientIP.String(), r.URL.Path, country, rc.Platform, isBlocked)
+	recorder.RecordTops(rc.ClientIP.String(), r.URL.Path, country, rc.Platform, isBlockedDecision(rc.Decision))
 
 	if ua := r.UserAgent(); ua != "" {
 		recorder.RecordUA(ua)
@@ -532,6 +531,17 @@ func computeDiscriminator(platform, ua string) string {
 	_, _ = h.Write([]byte(ua))
 
 	return platform + ":" + strconv.FormatUint(uint64(h.Sum32()), 16)
+}
+
+// isBlockedDecision reports whether a decision counts as "blocked" for top-N
+// metrics. Captcha is excluded — it's a challenge, not a denial.
+func isBlockedDecision(d waf.Action) bool {
+	switch d { //nolint:exhaustive // ActionPass/Log/Captcha are intentionally not blocks
+	case waf.ActionBlock, waf.ActionHardBlock, waf.ActionSoftBlock, waf.ActionThrottle:
+		return true
+	default:
+		return false
+	}
 }
 
 func parseFallbackAction(s string) waf.Action {

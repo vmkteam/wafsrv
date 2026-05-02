@@ -30,7 +30,8 @@ type Config struct {
 	CaptchaToBlock       int
 	CaptchaToBlockWindow time.Duration
 	SoftBlockDuration    time.Duration
-	CaptchaProvider      string // "turnstile" | "hcaptcha" | "pow"
+	BlockRetryAfter      time.Duration // 0 = no Retry-After header on block responses
+	CaptchaProvider      string        // "turnstile" | "hcaptcha" | "pow"
 	CaptchaSiteKey       string
 	CaptchaSecretKey     string
 	CaptchaCookieName    string
@@ -92,7 +93,7 @@ func New(cfg Config, store storage.KVStore, cache *challenge.Cache, verifier *ch
 }
 
 // Middleware returns an HTTP middleware that applies decisions based on score.
-func (e *Engine) Middleware() func(http.Handler) http.Handler { //nolint:gocognit
+func (e *Engine) Middleware() func(http.Handler) http.Handler { //nolint:gocognit,funlen
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rc := waf.FromContext(r.Context())
@@ -118,12 +119,14 @@ func (e *Engine) Middleware() func(http.Handler) http.Handler { //nolint:gocogni
 			}
 
 			// check soft block (per discriminator — NAT-aware)
-			if e.isSoftBlocked(eKey) {
+			if blocked, remaining := e.isSoftBlocked(eKey); blocked {
 				rc.Decision = waf.ActionSoftBlock
 				e.metrics.DecisionTotal.WithLabelValues("soft_block", e.metricPlatform(rc.Platform)).Inc()
 				e.metrics.Recorder.RecordDecision("soft_block")
 				e.addEvent(r.Context(), rc.ClientIP.String(), r.URL.Path, "soft_block")
 				e.metrics.Recorder.RecordBlocked(rc.ClientIP.String(), r.URL.Path, "", rc.Platform)
+				w.Header().Set(waf.HeaderAction, waf.ActionHeaderBlock)
+				setRetryAfter(w, remaining)
 				challenge.RenderBlock(w, e.cfg.BlockStatusCode, rc.RequestID, e.cfg.Branding)
 
 				return
@@ -166,6 +169,8 @@ func (e *Engine) Middleware() func(http.Handler) http.Handler { //nolint:gocogni
 				e.addEvent(r.Context(), rc.ClientIP.String(), r.URL.Path, "block")
 				e.metrics.Recorder.RecordBlocked(rc.ClientIP.String(), r.URL.Path, "", rc.Platform)
 				e.sendAlert(r.Context(), rc, alerting.EventHardBlock, fmt.Sprintf("score %.0f >= %.0f", score, e.cfg.BlockThreshold))
+				w.Header().Set(waf.HeaderAction, waf.ActionHeaderBlock)
+				setRetryAfter(w, e.cfg.BlockRetryAfter)
 				challenge.RenderBlock(w, e.cfg.BlockStatusCode, rc.RequestID, e.cfg.Branding)
 
 				return
@@ -180,6 +185,8 @@ func (e *Engine) Middleware() func(http.Handler) http.Handler { //nolint:gocogni
 					e.metrics.Recorder.RecordDecision("captcha")
 					e.recordCaptcha(r.Context(), eKey)
 					e.addEvent(r.Context(), rc.ClientIP.String(), r.URL.Path, "captcha")
+
+					w.Header().Set(waf.HeaderAction, waf.ActionHeaderCaptcha)
 
 					switch {
 					case e.powVerifier != nil:
@@ -208,27 +215,44 @@ func (e *Engine) Middleware() func(http.Handler) http.Handler { //nolint:gocogni
 	}
 }
 
-func (e *Engine) isSoftBlocked(key string) bool {
+// isSoftBlocked reports whether key is currently soft-blocked, and returns the
+// remaining duration (rounded up to whole seconds for Retry-After).
+func (e *Engine) isSoftBlocked(key string) (bool, time.Duration) {
 	data, exists, err := e.store.Get("esc:" + key)
 	if err != nil || !exists {
-		return false
+		return false, 0
 	}
 
 	var entry scoreEntry
 	if err := json.Unmarshal(data, &entry); err != nil {
-		return false
+		return false, 0
 	}
 
-	if !entry.BlockedUntil.IsZero() && time.Now().Before(entry.BlockedUntil) {
-		return true
-	}
-
-	// clear expired block
 	if !entry.BlockedUntil.IsZero() {
+		remaining := time.Until(entry.BlockedUntil)
+		if remaining > 0 {
+			return true, remaining
+		}
+
+		// clear expired block
 		_ = e.store.Delete("esc:" + key)
 	}
 
-	return false
+	return false, 0
+}
+
+// setRetryAfter writes Retry-After header in whole seconds when d > 0.
+func setRetryAfter(w http.ResponseWriter, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+
+	secs := int(d.Round(time.Second) / time.Second)
+	if secs < 1 {
+		secs = 1
+	}
+
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
 }
 
 // verifyCaptchaCookie checks if the captcha cookie contains a valid token
@@ -440,6 +464,8 @@ func (e *Engine) applyCaptchaFallback(w http.ResponseWriter, r *http.Request, rc
 		e.metrics.Recorder.RecordDecision("captcha_fallback_block")
 		e.addEvent(r.Context(), rc.ClientIP.String(), r.URL.Path, "captcha_fallback_block")
 		e.sendAlert(r.Context(), rc, alerting.EventHardBlock, "captcha fallback block (platform: "+rc.Platform+")")
+		w.Header().Set(waf.HeaderAction, waf.ActionHeaderBlock)
+		setRetryAfter(w, e.cfg.BlockRetryAfter)
 		challenge.RenderBlock(w, e.cfg.BlockStatusCode, rc.RequestID, e.cfg.Branding)
 	case waf.ActionLog:
 		rc.Decision = waf.ActionLog

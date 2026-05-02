@@ -129,11 +129,12 @@ func (c *TrafficFilterConfig) TrafficFilterEnabled() bool {
 type DecisionConfig struct {
 	CaptchaThreshold     float64 // default 5
 	BlockThreshold       float64 // default 8
-	CaptchaStatusCode    int     // default 499
+	CaptchaStatusCode    int     // default 403
 	BlockStatusCode      int     // default 403
 	CaptchaToBlock       int     // default 3
 	CaptchaToBlockWindow string  // default "10m"
 	SoftBlockDuration    string  // default "10m"
+	BlockRetryAfter      string  // duration, default "" = no Retry-After header on block responses
 	CaptchaFallback      string  // default "block"; "pass" | "block" | "log"
 	Platforms            []PlatformCaptchaConfig
 }
@@ -210,6 +211,7 @@ type RateLimitConfig struct {
 	PerIP       string             // "100/min"
 	Action      string             // "block" | "throttle"
 	MaxCounters int                // LRU eviction
+	RetryAfter  string             // duration, default "60s"; sent as Retry-After on 429
 	Rules       []RateLimitRule    // RPC method matching
 	URLRules    []URLRateLimitRule // HTTP path/method/host matching
 }
@@ -501,6 +503,8 @@ func (c *Config) Validate() error {
 		{c.Captcha.IPCacheTTL, "Captcha.IPCacheTTL"},
 		{c.Decision.CaptchaToBlockWindow, "Decision.CaptchaToBlockWindow"},
 		{c.Decision.SoftBlockDuration, "Decision.SoftBlockDuration"},
+		{c.Decision.BlockRetryAfter, "Decision.BlockRetryAfter"},
+		{c.RateLimit.RetryAfter, "RateLimit.RetryAfter"},
 		{c.IP.Reputation.UpdateInterval, "IP.Reputation.UpdateInterval"},
 	}
 
@@ -779,6 +783,7 @@ func (c *Config) LimiterConfig() (limit.Config, error) {
 		PerIP:       perIP,
 		Action:      c.RateLimit.Action,
 		MaxCounters: c.RateLimit.MaxCounters,
+		RetryAfter:  parseDuration(c.RateLimit.RetryAfter, 60*time.Second),
 		Rules:       rules,
 		URLRules:    urlRules,
 	}, nil
@@ -1030,6 +1035,10 @@ func applyWAFDefaults(c *Config) {
 		c.RateLimit.MaxCounters = 100000
 	}
 
+	if c.RateLimit.RetryAfter == "" {
+		c.RateLimit.RetryAfter = "60s"
+	}
+
 	if c.IP.Whitelist.BotVerify.CacheSize == 0 {
 		c.IP.Whitelist.BotVerify.CacheSize = 10000
 	}
@@ -1075,7 +1084,7 @@ func applyDecisionDefaults(c *Config) {
 	}
 
 	if c.Decision.CaptchaStatusCode == 0 {
-		c.Decision.CaptchaStatusCode = 499
+		c.Decision.CaptchaStatusCode = http.StatusForbidden
 	}
 
 	if c.Decision.BlockStatusCode == 0 {

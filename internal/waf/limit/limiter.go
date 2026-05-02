@@ -26,8 +26,9 @@ type Config struct {
 	PerIP       Rate
 	Action      string // "block" | "throttle"
 	MaxCounters int
-	Rules       []Rule    // RPC method matching
-	URLRules    []URLRule // HTTP path/method/host matching
+	RetryAfter  time.Duration // sent as Retry-After header on 429
+	Rules       []Rule        // RPC method matching
+	URLRules    []URLRule     // HTTP path/method/host matching
 }
 
 // Rule defines a per-method rate limit (JSON-RPC matching).
@@ -119,6 +120,7 @@ func (l *Limiter) Middleware() func(http.Handler) http.Handler {
 			}
 
 			if !l.allowIP(rc.ClientIP.String()) {
+				rc.Decision = waf.ActionThrottle
 				l.metrics.ExceededTotal.WithLabelValues("per_ip", l.cfg.Action).Inc()
 				l.Print(r.Context(), "rate_limit",
 					"clientIp", rc.ClientIP.String(),
@@ -210,6 +212,7 @@ func (l *Limiter) enforce(w http.ResponseWriter, r *http.Request, rc *waf.Reques
 		return true
 	}
 
+	rc.Decision = waf.ActionThrottle
 	l.metrics.ExceededTotal.WithLabelValues(name, action).Inc()
 	l.addEvent(rc.ClientIP.String(), r.URL.Path, name, rc.Platform)
 	l.Print(r.Context(), "rate_limit",
@@ -253,6 +256,11 @@ func (l *Limiter) addEvent(clientIP, path, rule, platform string) {
 }
 
 func (l *Limiter) reject(w http.ResponseWriter) {
-	w.Header().Set("Retry-After", "60")
+	w.Header().Set(waf.HeaderAction, waf.ActionHeaderThrottle)
+
+	if l.cfg.RetryAfter > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(l.cfg.RetryAfter.Seconds())))
+	}
+
 	http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 }

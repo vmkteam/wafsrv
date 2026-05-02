@@ -370,6 +370,7 @@ func (a *App) initDecision() {
 		CaptchaToBlock:       a.cfg.Decision.CaptchaToBlock,
 		CaptchaToBlockWindow: parseDuration(a.cfg.Decision.CaptchaToBlockWindow, 10*time.Minute),
 		SoftBlockDuration:    parseDuration(a.cfg.Decision.SoftBlockDuration, 10*time.Minute),
+		BlockRetryAfter:      parseDuration(a.cfg.Decision.BlockRetryAfter, 0),
 		CaptchaProvider:      a.cfg.Captcha.Provider,
 		CaptchaSiteKey:       a.cfg.Captcha.SiteKey,
 		CaptchaSecretKey:     a.cfg.Captcha.SecretKey,

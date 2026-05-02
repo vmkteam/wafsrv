@@ -44,6 +44,8 @@ func (s *ServiceSuite) TestBlacklistBlock() {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, s.requestWithIP("1.2.3.4"))
 	s.Equal(http.StatusForbidden, w.Code, "blacklisted IP should be blocked")
+	s.Equal(waf.ActionHeaderBlock, w.Header().Get(waf.HeaderAction), "static blacklist must set X-WAF-Action: block")
+	s.Empty(w.Header().Get("Retry-After"), "static (permanent) blacklist must not set Retry-After")
 }
 
 func (s *ServiceSuite) TestNonListedPass() {
@@ -150,7 +152,7 @@ func (s *ServiceSuite) TestAddBlockCountry() {
 func (s *ServiceSuite) TestBlockWithDuration() {
 	svc := s.newService(Config{})
 
-	err := svc.AddBlock("ip", "6.6.6.6", "temp", 100*time.Millisecond)
+	err := svc.AddBlock("ip", "6.6.6.6", "temp", 30*time.Second)
 	s.Require().NoError(err)
 
 	// immediately → blocked
@@ -158,12 +160,15 @@ func (s *ServiceSuite) TestBlockWithDuration() {
 	w1 := httptest.NewRecorder()
 	handler.ServeHTTP(w1, s.requestWithIP("6.6.6.6"))
 	s.Equal(http.StatusForbidden, w1.Code, "should be blocked before expiry")
+	s.Equal(waf.ActionHeaderBlock, w1.Header().Get(waf.HeaderAction))
+	s.NotEmpty(w1.Header().Get("Retry-After"), "TTL'd block should expose remaining time as Retry-After")
 
-	// wait for expiry
+	// short TTL still works for expiry path
+	s.Require().NoError(svc.AddBlock("ip", "7.7.7.7", "temp", 80*time.Millisecond))
 	time.Sleep(150 * time.Millisecond)
 
 	w2 := httptest.NewRecorder()
-	handler.ServeHTTP(w2, s.requestWithIP("6.6.6.6"))
+	handler.ServeHTTP(w2, s.requestWithIP("7.7.7.7"))
 	s.Equal(http.StatusOK, w2.Code, "should pass after TTL expires")
 }
 
