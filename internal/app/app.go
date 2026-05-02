@@ -112,6 +112,7 @@ func New(appName string, sl embedlog.Logger, cfg Config) (*App, error) {
 
 	// AttackService must exist before WAF wire-up: filter and decide read it via waf.AttackState DI.
 	a.attackSvc = dashboard.NewAttackService()
+	a.metrics.registerAttackModeGauge(a.attackSvc.IsEnabled)
 
 	if err := a.initWAF(); err != nil {
 		return nil, err

@@ -31,7 +31,8 @@ const (
 	metricAdaptiveAttack     = "wafsrv_adaptive_attack_total"
 	metricProxyErrorsTotal   = "wafsrv_proxy_errors_total"
 	metricAttackOnlyMatch    = "wafsrv_attack_only_match_total"
-	metricAttackScoreBoost   = "wafsrv_attack_score_boost_applied_total"
+	metricAttackScoreBoost   = "wafsrv_attack_score_boost_total"
+	metricAttackModeActive   = "wafsrv_attack_mode_active"
 )
 
 // appMetrics holds all prometheus metrics for the application.
@@ -155,12 +156,12 @@ func newMetrics() *appMetrics { //nolint:funlen // flat constructor, no logic to
 
 		attackOnlyTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: metricAttackOnlyMatch,
-			Help: "Total fires of AttackOnly traffic-filter rules (Under Attack Mode).",
+			Help: "Total fires of AttackOnly traffic-filter rules during Under Attack Mode. Strict subset of wafsrv_traffic_filter_total{rule} — AttackOnly fires also bump the regular filter counter.",
 		}, []string{"rule"}),
 
 		attackScoreBoostUsed: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: metricAttackScoreBoost,
-			Help: "Total requests where AttackScoreBoost moved the decision (captcha/block) during Under Attack Mode.",
+			Help: "Total requests where AttackScoreBoost moved the decision across a threshold (captcha/block) during Under Attack Mode. Counts threshold crossings only, not every boosted request.",
 		}, []string{"result"}),
 	}
 
@@ -184,6 +185,30 @@ func newMetrics() *appMetrics { //nolint:funlen // flat constructor, no logic to
 	)
 
 	return m
+}
+
+// registerAttackModeGauge wires a GaugeFunc that returns 1 while Under Attack
+// Mode is active. Must be called once after the AttackService is constructed.
+// The gauge unlocks operator queries like
+//
+//	max_over_time(wafsrv_attack_mode_active[1h])  // was attack mode on at all
+//	changes(wafsrv_attack_mode_active[1h])         // toggle count for timelines
+//
+// IsEnabled is the lock-free atomic read added in the snapshot refactor, so
+// the GaugeFunc is safe to call on every Prometheus scrape.
+func (m *appMetrics) registerAttackModeGauge(isEnabled func() bool) {
+	g := prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: metricAttackModeActive,
+		Help: "1 if Under Attack Mode is currently enabled, 0 otherwise.",
+	}, func() float64 {
+		if isEnabled() {
+			return 1
+		}
+
+		return 0
+	})
+
+	m.registry.MustRegister(g)
 }
 
 // proxyErrorRecorder adapts the proxy_errors_total counter to proxy.ErrorRecorder.
