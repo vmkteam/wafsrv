@@ -2,6 +2,8 @@
 Listen = ":8080"
 Targets = ["http://localhost:3000"]
 ServiceName = "apisrv"
+# PreserveHost = true          # forward original client Host to backend (default true).
+#                              # Set false to send the backend address as Host (vhost/CDN backends).
 # NoBackendRetryAfter = "5s"  # Retry-After header on 503 when backend pool is empty
 
 # DNS SRV discovery (alternative to Targets, mutually exclusive)

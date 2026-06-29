@@ -28,6 +28,7 @@ var errBackend5xx = errors.New("proxy: backend returned 5xx")
 // Config holds proxy configuration.
 type Config struct {
 	Scheme              string // URL scheme for backends (default "http")
+	PreserveHost        bool   // forward the original client Host to the backend (default true)
 	ReadTimeout         time.Duration
 	WriteTimeout        time.Duration // used by http.Server in app
 	IdleTimeout         time.Duration // used by http.Server in app
@@ -80,10 +81,11 @@ type pool struct {
 
 // Proxy is a reverse proxy with dynamic backend discovery and per-backend circuit breakers.
 type Proxy struct {
-	pool      atomic.Pointer[pool]
-	idx       atomic.Uint64 // round-robin counter, stable across pool swaps
-	transport http.RoundTripper
-	scheme    string
+	pool         atomic.Pointer[pool]
+	idx          atomic.Uint64 // round-robin counter, stable across pool swaps
+	transport    http.RoundTripper
+	scheme       string
+	preserveHost bool
 
 	// discovery
 	resolver       Resolver
@@ -125,6 +127,7 @@ func New(cfg Config, resolver Resolver) (*Proxy, error) {
 	p := &Proxy{
 		transport:           newTransport(cfg.ReadTimeout),
 		scheme:              scheme,
+		preserveHost:        cfg.PreserveHost,
 		resolver:            resolver,
 		refresh:             cfg.RefreshInterval,
 		resolveTimeout:      cfg.ResolveTimeout,
@@ -328,9 +331,23 @@ func (p *Proxy) newBackend(t Target) *backend {
 
 	b.proxy = &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
+			// Route the connection to the backend address. req.URL.Host is the
+			// TCP dial target; req.Host is the HTTP Host header sent on the wire.
 			req.URL.Scheme = u.Scheme
 			req.URL.Host = u.Host
-			req.Host = u.Host
+
+			if p.preserveHost {
+				// Keep the original client Host (e.g. "example.com") so the
+				// backend builds absolute redirects/links against the public
+				// host instead of the internal backend address. Advertise the
+				// original host to the backend for canonical-URL logic.
+				if req.Host != "" {
+					req.Header.Set("X-Forwarded-Host", req.Host)
+				}
+			} else {
+				req.Host = u.Host
+			}
+
 			if _, ok := req.Header["User-Agent"]; !ok {
 				req.Header.Set("User-Agent", "")
 			}

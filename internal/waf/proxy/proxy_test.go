@@ -392,6 +392,54 @@ func (s *ProxySuite) TestFirstBackendURL() {
 	s.Contains(p.FirstBackendURL(), u.Host, "should return first backend URL")
 }
 
+func (s *ProxySuite) TestPreserveHost() {
+	var gotHost, gotXFH string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost = r.Host
+		gotXFH = r.Header.Get("X-Forwarded-Host")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	u, err := url.Parse(backend.URL)
+	s.Require().NoError(err)
+
+	cases := []struct {
+		name         string
+		preserveHost bool
+		wantHost     string // expected Host seen by backend
+		wantXFH      string
+	}{
+		{name: "preserve", preserveHost: true, wantHost: "example.com", wantXFH: "example.com"},
+		{name: "rewrite", preserveHost: false, wantHost: u.Host, wantXFH: ""},
+	}
+
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			gotHost, gotXFH = "", ""
+			p, err := New(Config{
+				ReadTimeout:  5 * time.Second,
+				PreserveHost: tc.preserveHost,
+			}, Static([]*url.URL{u}))
+			s.Require().NoError(err)
+
+			ts := httptest.NewServer(p.Handler())
+			defer ts.Close()
+
+			req, err := http.NewRequest(http.MethodGet, ts.URL+"/", nil)
+			s.Require().NoError(err)
+			req.Host = "example.com"
+
+			resp, err := http.DefaultClient.Do(req)
+			s.Require().NoError(err)
+			resp.Body.Close()
+
+			s.Equal(tc.wantHost, gotHost, "backend should receive expected Host header")
+			s.Equal(tc.wantXFH, gotXFH, "backend should receive expected X-Forwarded-Host header")
+		})
+	}
+}
+
 func (s *ProxySuite) newProxy(target string) *Proxy {
 	u, err := url.Parse(target)
 	s.Require().NoError(err)
