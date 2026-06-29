@@ -372,6 +372,7 @@ type ProxyConfig struct {
 	Targets             []string
 	ServiceName         string
 	Platforms           []string // known platform names for metrics normalization
+	PreserveHost        *bool    // forward original client Host to backend, default true
 	NoBackendRetryAfter string   // Retry-After header for empty pool 503, default "5s"
 	Timeouts            TimeoutsConfig
 	Limits              LimitsConfig
@@ -379,6 +380,13 @@ type ProxyConfig struct {
 	CircuitBreaker      CBConfig
 	Static              StaticConfig
 	TargetDiscovery     TargetDiscoveryConfig
+}
+
+// preserveHost reports whether the original client Host header is forwarded
+// to the backend (default true). Set Proxy.PreserveHost = false to send the
+// backend address as Host instead (e.g. for vhost/CDN backends).
+func (c *ProxyConfig) preserveHost() bool {
+	return c.PreserveHost == nil || *c.PreserveHost
 }
 
 // TargetDiscoveryConfig configures dynamic backend discovery via DNS SRV.
@@ -665,6 +673,7 @@ func (c *Config) ProxyConfig() (proxy.Config, error) {
 
 	return proxy.Config{
 		Scheme:              scheme,
+		PreserveHost:        c.Proxy.preserveHost(),
 		ReadTimeout:         parseDuration(c.Proxy.Timeouts.Read, 30*time.Second),
 		WriteTimeout:        parseDuration(c.Proxy.Timeouts.Write, 30*time.Second),
 		IdleTimeout:         parseDuration(c.Proxy.Timeouts.Idle, 120*time.Second),
@@ -981,6 +990,10 @@ func applyAdaptiveDefaults(c *Config) {
 func applyProxyDefaults(c *Config) {
 	if c.Proxy.Listen == "" {
 		c.Proxy.Listen = ":8080"
+	}
+
+	if c.Proxy.PreserveHost == nil {
+		c.Proxy.PreserveHost = &trueVal
 	}
 
 	if c.Proxy.Timeouts.Read == "" {

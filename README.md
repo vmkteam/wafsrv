@@ -167,6 +167,7 @@ CaptchaFallback = "block"
 
 [Captcha]
 Provider = "turnstile"
+Secret = "<openssl rand -hex 32>"   # required when Provider is set; ≥32 bytes; identical on every instance
 SiteKey = "your-site-key"
 SecretKey = "your-secret-key"
 
@@ -315,6 +316,8 @@ Hosts = ["127.0.0.1:3000"]
 Namespace = "wafsrv"
 KeyPrefix = "myapp:"
 ```
+
+When CAPTCHA is enabled, also set `Captcha.Secret` (≥32 bytes, identical on every node) — it signs the `waf_pass` cookie and PoW challenges, so a cookie issued by one instance must validate on another. Generate via `openssl rand -hex 32` and ship through your secret store. Without a shared secret, each load-balancer hop forces the user to solve CAPTCHA again. wafsrv logs a startup warning if `Captcha.Provider` is set with `Storage.Backend = "memory"` — that combination is multi-instance-unsafe.
 
 ## License
 

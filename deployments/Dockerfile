@@ -14,5 +14,5 @@ COPY --from=builder /build/wafsrv /opt/wafsrv/wafsrv
 COPY --from=builder /build/cfg/ /opt/wafsrv/cfg/
 
 WORKDIR /opt/wafsrv
-ENTRYPOINT ["/opt/wafsrv/wafsrv", "-config=cfg/local.toml", "-json"]
+ENTRYPOINT ["/opt/wafsrv/wafsrv"]
 EXPOSE 8080 8081
