@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 	"wafsrv/internal/waf/sign"
 	"wafsrv/internal/waf/storage"
 
+	"github.com/BurntSushi/toml"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/vmkteam/embedlog"
 )
@@ -593,6 +595,17 @@ func (a *App) buildMgmtHandler() http.Handler {
 	})
 
 	mux.Handle("GET /metrics", promhttp.HandlerFor(a.metrics.registry, promhttp.HandlerOpts{}))
+
+	mux.HandleFunc("GET /config.toml", func(w http.ResponseWriter, _ *http.Request) {
+		var buf bytes.Buffer
+		if err := toml.NewEncoder(&buf).Encode(a.cfg.Redacted()); err != nil {
+			http.Error(w, "config encode error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = buf.WriteTo(w)
+	})
 
 	rules := make([]dashboard.RuleInfo, 0, len(a.cfg.RateLimit.Rules))
 	for _, r := range a.cfg.RateLimit.Rules {

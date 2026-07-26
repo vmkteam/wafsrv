@@ -10,6 +10,7 @@ import (
 
 	"wafsrv/internal/waf/proxy"
 
+	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/suite"
 	"github.com/vmkteam/embedlog"
 )
@@ -140,6 +141,25 @@ func (s *AppSuite) TestMgmtHandler_RPC_StatusGet() {
 	body, _ := io.ReadAll(resp.Body)
 	s.Contains(string(body), "test-svc", "should return service name via zenrpc")
 	s.Contains(string(body), "uptimeSeconds", "should return uptime")
+}
+
+func (s *AppSuite) TestMgmtHandler_ConfigTOML() {
+	handler := s.app.buildMgmtHandler()
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/config.toml")
+	s.Require().NoError(err)
+	defer resp.Body.Close()
+
+	s.Equal(http.StatusOK, resp.StatusCode)
+	s.Equal("text/plain; charset=utf-8", resp.Header.Get("Content-Type"))
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var cfg Config
+	s.Require().NoError(toml.Unmarshal(body, &cfg), "exported config must be valid TOML")
+	s.Equal("test-svc", cfg.Proxy.ServiceName, "export must reflect the running config")
 }
 
 func (s *AppSuite) TestMgmtHandler_Metrics() {

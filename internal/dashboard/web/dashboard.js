@@ -86,6 +86,23 @@ function dashboard() {
       return data.result;
     },
 
+    // --- Config Builder (external, config passed via base64url hash) ---
+    async openBuilder() {
+      const builderURL = 'https://vmkteam.github.io/wafsrv-builder/';
+      try {
+        const resp = await fetch('/config.toml');
+        if (!resp.ok) throw new Error('config export failed');
+        const toml = await resp.text();
+        const bytes = new TextEncoder().encode(toml);
+        let bin = '';
+        for (const b of bytes) bin += String.fromCharCode(b);
+        const b64 = btoa(bin).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+        window.open(builderURL + '#config=' + b64, '_blank');
+      } catch (_) {
+        window.open(builderURL, '_blank');
+      }
+    },
+
     // --- Status ---
     async loadStatus() {
       try {

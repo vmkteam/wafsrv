@@ -347,6 +347,43 @@ Secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	s.Len(cfg.Captcha.Secret, 64)
 }
 
+func (s *ConfigSuite) TestRedacted() {
+	cfg := Config{
+		Proxy: ProxyConfig{ServiceName: "svc"},
+		Captcha: CaptchaConfig{
+			Provider:  "turnstile",
+			SiteKey:   "public-site-key",
+			SecretKey: "captcha-secret-key",
+			Secret:    "hmac-secret",
+		},
+		Signing: SigningConfig{
+			Web:     SigningPlatformConfig{Secret: "web-secret"},
+			Android: SigningPlatformConfig{Secret: "android-secret"},
+			IOS:     SigningPlatformConfig{Secret: "ios-secret"},
+		},
+		Alerting: AlertingConfig{
+			Webhooks: []WebhookConfig{{URL: "https://hooks.slack.com/services/T00/B00/token", Events: []string{"hard_block"}}},
+		},
+	}
+
+	red := cfg.Redacted()
+
+	s.Empty(red.Captcha.Secret)
+	s.Empty(red.Captcha.SecretKey)
+	s.Equal("public-site-key", red.Captcha.SiteKey, "site key is public and must be kept")
+	s.Empty(red.Signing.Web.Secret)
+	s.Empty(red.Signing.Android.Secret)
+	s.Empty(red.Signing.IOS.Secret)
+	s.Require().Len(red.Alerting.Webhooks, 1)
+	s.Empty(red.Alerting.Webhooks[0].URL)
+	s.Equal([]string{"hard_block"}, red.Alerting.Webhooks[0].Events, "non-secret webhook fields must be kept")
+
+	// original must be untouched
+	s.Equal("hmac-secret", cfg.Captcha.Secret)
+	s.Equal("web-secret", cfg.Signing.Web.Secret)
+	s.Equal("https://hooks.slack.com/services/T00/B00/token", cfg.Alerting.Webhooks[0].URL)
+}
+
 func (s *ConfigSuite) writeConfig(content string) string {
 	dir := s.T().TempDir()
 	path := filepath.Join(dir, "test.toml")

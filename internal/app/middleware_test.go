@@ -1,7 +1,6 @@
 package app
 
 import (
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -68,14 +67,49 @@ func (s *MiddlewareSuite) TestStatusBucket() {
 }
 
 func (s *MiddlewareSuite) TestAccessLogPanicReturns500() {
+	cfg := newAccessLogTestConfig()
+
+	handler := accessLog(cfg)(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		panic("boom")
+	}))
+
+	rw := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	handler.ServeHTTP(rw, req)
+
+	s.Equal(http.StatusInternalServerError, rw.Code, "panic should produce 500")
+}
+
+func (s *MiddlewareSuite) TestAccessLogAbortHandlerRepanic() {
+	cfg := newAccessLogTestConfig()
+
+	handler := accessLog(cfg)(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		panic(http.ErrAbortHandler)
+	}))
+
+	rw := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	s.PanicsWithValue(http.ErrAbortHandler, func() {
+		handler.ServeHTTP(rw, req)
+	}, "client abort must be re-raised for net/http, not logged as error")
+
+	s.NotEqual(http.StatusInternalServerError, rw.Code, "client abort must not be rewritten to 500")
+
+	ch := make(chan prometheus.Metric, 10)
+	cfg.requestsTotal.Collect(ch)
+	s.NotEmpty(ch, "aborted request must still be counted in metrics")
+}
+
+func newAccessLogTestConfig() accessLogConfig {
 	rec := event.NewRecorder(
 		event.NewBuffer(1),
 		event.NewSeries(time.Second, 1),
 		event.NewTops(time.Minute, 100),
 	)
 
-	cfg := accessLogConfig{
-		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	return accessLogConfig{
+		logger:      slog.New(slog.DiscardHandler),
 		serviceName: "test",
 		requestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "test_requests_total",
@@ -88,14 +122,4 @@ func (s *MiddlewareSuite) TestAccessLogPanicReturns500() {
 		recorder:    rec,
 		platformSet: map[string]struct{}{},
 	}
-
-	handler := accessLog(cfg)(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		panic("boom")
-	}))
-
-	rw := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	handler.ServeHTTP(rw, req)
-
-	s.Equal(http.StatusInternalServerError, rw.Code, "panic should produce 500")
 }

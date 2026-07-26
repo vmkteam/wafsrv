@@ -149,6 +149,85 @@ func (s *ServiceSuite) TestAddBlockCountry() {
 	s.Equal("test country", entries[0].Reason)
 }
 
+// --- Country actions (block / captcha / log) ---
+
+func (s *ServiceSuite) TestCountryActionPriority() {
+	svc := s.newService(Config{
+		BlockCountries:   []string{"BB"},
+		CaptchaCountries: []string{"BB", "CC"},
+		LogCountries:     []string{"BB", "CC", "LL"},
+	})
+
+	s.Equal(countryBlock, svc.countryAction("BB"), "block wins over captcha and log")
+	s.Equal(countryCaptcha, svc.countryAction("CC"), "captcha wins over log")
+	s.Equal(countryLog, svc.countryAction("LL"))
+	s.Equal(countryNone, svc.countryAction("ZZ"))
+	s.Equal(countryNone, svc.countryAction(""))
+}
+
+func (s *ServiceSuite) TestCountryActionRuntimeBlock() {
+	svc := s.newService(Config{
+		CaptchaCountries: []string{"CC"},
+	})
+
+	s.Require().NoError(svc.AddBlock("country", "CC", "test", 0))
+	s.Equal(countryBlock, svc.countryAction("CC"), "runtime block wins over static captcha")
+
+	s.Require().NoError(svc.RemoveBlock("country", "CC"))
+	s.Equal(countryCaptcha, svc.countryAction("CC"))
+}
+
+func (s *ServiceSuite) TestCountryBlockMiddleware() {
+	country := s.countryOf("8.8.8.8")
+
+	svc := s.newService(Config{BlockCountries: []string{country}})
+	handler := svc.Middleware()(okHandler())
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, s.requestWithIP("8.8.8.8"))
+	s.Equal(http.StatusForbidden, w.Code, "blocked country should be denied")
+	s.Equal(waf.ActionHeaderBlock, w.Header().Get(waf.HeaderAction))
+}
+
+func (s *ServiceSuite) TestCountryCaptchaScore() {
+	country := s.countryOf("8.8.8.8")
+
+	svc := s.newService(Config{CaptchaCountries: []string{country}})
+
+	var gotRC *waf.RequestContext
+
+	handler := svc.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRC = waf.FromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, s.requestWithIP("8.8.8.8"))
+
+	s.Equal(http.StatusOK, w.Code, "captcha country should pass to decision engine")
+	s.Require().NotNil(gotRC)
+	s.InDelta(countryCaptchaScore, gotRC.WAFScore, 0.001, "captcha country should bump WAFScore")
+}
+
+func (s *ServiceSuite) TestCountryLogPass() {
+	country := s.countryOf("8.8.8.8")
+
+	svc := s.newService(Config{LogCountries: []string{country}})
+
+	var gotRC *waf.RequestContext
+
+	handler := svc.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRC = waf.FromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, s.requestWithIP("8.8.8.8"))
+
+	s.Equal(http.StatusOK, w.Code, "log country should pass")
+	s.Require().NotNil(gotRC)
+	s.Zero(gotRC.WAFScore, "log country must not affect WAFScore")
+}
+
 func (s *ServiceSuite) TestBlockWithDuration() {
 	svc := s.newService(Config{})
 
@@ -256,6 +335,17 @@ func (s *ServiceSuite) newService(cfg Config) *Service {
 	s.Require().NoError(err)
 
 	return svc
+}
+
+// countryOf resolves the country of an IP via embedded GeoIP; skips DB-content coupling in assertions.
+func (s *ServiceSuite) countryOf(ipStr string) string {
+	svc := s.newService(Config{})
+	defer func() { _ = svc.Close() }()
+
+	info := svc.LookupIP(netip.MustParseAddr(ipStr))
+	s.Require().NotEmpty(info.Country, "embedded GeoIP must resolve country for %s", ipStr)
+
+	return info.Country
 }
 
 func (s *ServiceSuite) requestWithIP(ipStr string) *http.Request {
