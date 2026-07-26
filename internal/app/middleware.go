@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -61,13 +62,6 @@ func accessLog(cfg accessLogConfig) Middleware {
 			r = r.WithContext(waf.NewContext(r.Context(), rc))
 
 			defer func() {
-				if rvr := recover(); rvr != nil {
-					stack := make([]byte, 4096)
-					stack = stack[:runtime.Stack(stack, false)]
-					cfg.logger.ErrorContext(r.Context(), "panic recovered", "panic", rvr, "stack", string(stack))
-					rec.WriteHeader(http.StatusInternalServerError)
-				}
-
 				duration := time.Since(start)
 
 				// prometheus (all requests)
@@ -94,6 +88,24 @@ func accessLog(cfg accessLogConfig) Middleware {
 
 				// access log (all requests)
 				logAccessEntry(cfg.logger, r, rec, rc, duration, cfg.serviceName)
+			}()
+
+			// registered after the metrics defer so it runs first (LIFO):
+			// on re-panic the metrics/access-log defer above still executes during unwinding.
+			defer func() {
+				if rvr := recover(); rvr != nil {
+					// ReverseProxy panics with http.ErrAbortHandler when the client
+					// disconnects mid-response; re-panic so net/http aborts the
+					// connection quietly instead of logging it as an error.
+					if err, ok := rvr.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+						panic(rvr)
+					}
+
+					stack := make([]byte, 4096)
+					stack = stack[:runtime.Stack(stack, false)]
+					cfg.logger.ErrorContext(r.Context(), "panic recovered", "panic", rvr, "stack", string(stack))
+					rec.WriteHeader(http.StatusInternalServerError)
+				}
 			}()
 
 			next.ServeHTTP(rec, r)

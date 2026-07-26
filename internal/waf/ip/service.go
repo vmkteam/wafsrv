@@ -388,7 +388,8 @@ func (s *Service) Middleware() func(http.Handler) http.Handler {
 			if s.geo != nil {
 				s.geo.lookup(rc.ClientIP, info)
 
-				if s.isCountryBlocked(info.Country) {
+				switch s.countryAction(info.Country) { //nolint:exhaustive // countryNone is the default no-op
+				case countryBlock:
 					rc.Decision = waf.ActionBlock
 					s.metrics.BlockedTotal.WithLabelValues("country").Inc()
 					s.addEvent(r, rc, "ip_blocked", "country:"+info.Country)
@@ -396,6 +397,13 @@ func (s *Service) Middleware() func(http.Handler) http.Handler {
 					http.Error(w, "Forbidden", http.StatusForbidden)
 
 					return
+				case countryCaptcha:
+					rc.WAFScore += countryCaptchaScore
+					s.metrics.BlockedTotal.WithLabelValues("country_captcha").Inc()
+					s.Print(r.Context(), "ip_country", "clientIp", rc.ClientIP.String(), "country", info.Country, "action", "captcha")
+				case countryLog:
+					s.metrics.BlockedTotal.WithLabelValues("country_log").Inc()
+					s.Print(r.Context(), "ip_country", "clientIp", rc.ClientIP.String(), "country", info.Country, "action", "log")
 				}
 			}
 
@@ -546,6 +554,44 @@ func (s *Service) isCountryBlocked(country string) bool {
 	}
 
 	return false
+}
+
+type countryActionType int
+
+const (
+	countryNone    countryActionType = iota
+	countryBlock                     // → 403
+	countryCaptcha                   // → score bump → decision engine
+	countryLog                       // → log only, pass
+)
+
+// countryCaptchaScore is added to WAFScore for requests from CaptchaCountries.
+const countryCaptchaScore = 5.0
+
+// countryAction resolves the action for a country with priority: block > captcha > log.
+// Block covers both static config and runtime entries added via management API.
+func (s *Service) countryAction(country string) countryActionType {
+	if country == "" {
+		return countryNone
+	}
+
+	if s.isCountryBlocked(country) {
+		return countryBlock
+	}
+
+	for _, c := range s.cfg.CaptchaCountries {
+		if c == country {
+			return countryCaptcha
+		}
+	}
+
+	for _, c := range s.cfg.LogCountries {
+		if c == country {
+			return countryLog
+		}
+	}
+
+	return countryNone
 }
 
 // checkReputation checks IP against reputation feeds and datacenter ASN.

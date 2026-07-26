@@ -34,7 +34,7 @@ Designed to run as a Docker sidecar in front of your backend service (behind Ngi
 **Observability**
 - Prometheus metrics (requests, latency, RPC methods, decisions, rate limits, IP blocks)
 - Structured JSON access log
-- Management dashboard with real-time stats and config builder
+- Management dashboard with real-time stats and one-click export to [Config Builder](https://vmkteam.github.io/wafsrv-builder/)
 - Management API via [zenrpc](https://github.com/vmkteam/zenrpc) (status, block rules, traffic filter, attack mode)
 
 ## Architecture

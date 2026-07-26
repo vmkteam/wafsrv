@@ -2,6 +2,31 @@ package app
 
 import "wafsrv/internal/dashboard"
 
+// Redacted returns a copy of the config with secret values blanked, safe for
+// export (GET /config.toml) and for opening in the external config builder.
+func (c *Config) Redacted() Config {
+	out := *c
+	out.Captcha.Secret = ""
+	out.Captcha.SecretKey = ""
+	out.Signing.Web.Secret = ""
+	out.Signing.Android.Secret = ""
+	out.Signing.IOS.Secret = ""
+
+	// webhook URLs embed access tokens; copy the slice so the original is untouched
+	if len(out.Alerting.Webhooks) > 0 {
+		webhooks := make([]WebhookConfig, len(out.Alerting.Webhooks))
+		copy(webhooks, out.Alerting.Webhooks)
+
+		for i := range webhooks {
+			webhooks[i].URL = ""
+		}
+
+		out.Alerting.Webhooks = webhooks
+	}
+
+	return out
+}
+
 // BuildConfigResponse creates a masked config response from app config.
 func BuildConfigResponse(c Config) dashboard.ConfigResponse {
 	return dashboard.ConfigResponse{
